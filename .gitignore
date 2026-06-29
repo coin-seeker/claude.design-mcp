@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# dedicated Chrome login profile (cookies / session) — NEVER commit
+chrome-profile/
+.chrome-profile/
+
+# pulled / generated designs + screenshots + zips
+designs/
+pulled/
+*.zip
+*.png
+
+# macOS
+.DS_Store

@@ -1,0 +1,18 @@
+{
+  "name": "claude.design-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP that drives the real claude.ai/design web app (login, create, iterate, pull) through your logged-in Chrome over CDP + playwright-core.",
+  "bin": {
+    "claude.design-mcp": "src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node test/helpers.test.mjs && node test/rpc.test.mjs && node test/turn-classify.test.mjs && node test/pull.test.mjs && node test/turn.test.mjs && node test/mcp.test.mjs",
+    "test:live": "CLAUDE_DESIGN_LIVE=1 node test/live.e2e.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.61.1"
+  }
+}

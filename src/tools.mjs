@@ -1,4 +1,5 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
+import { previewProject } from './preview.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
 import { awaitDesignReady, ensureSession, loginHelp } from './session.mjs';
@@ -15,6 +16,7 @@ export const TOOLS = [
   { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' } }, ['prompt']) },
   { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
+  { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
   { name: 'design_status', description: 'Summarize project data, chat count, and last message role.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
@@ -57,7 +59,7 @@ async function design_create(args = {}) {
   const created = await omelette(session.page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
   const projectId = requireString(created.projectId, 'projectId');
   await awaitDesignReady(session.page, projectId);
-  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 300_000) });
+  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000) });
   return { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn, files: await listAllFiles(session, projectId) };
 }
 
@@ -120,4 +122,10 @@ async function design_delete(args = {}) {
   return deleteProject(session, requireString(args.projectId, 'projectId'));
 }
 
-export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_get, design_status, design_edit, design_delete };
+async function design_preview(args = {}) {
+  const session = await ensureSession({ visible: false });
+  const project = selectProject(await listProjects(session), { projectId: args.projectId, name: args.name });
+  return previewProject(session, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height });
+}
+
+export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_edit, design_delete };

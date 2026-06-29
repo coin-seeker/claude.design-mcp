@@ -7,7 +7,20 @@ import { downloadZipExpression, omelette } from './rpc.mjs';
 export const DEFAULT_OUT = process.env.CLAUDE_DESIGN_DIR || process.cwd();
 
 function projectView(project) {
-  return { projectId: project.projectId, name: project.name, type: project.type, isOwned: project.isOwned };
+  return {
+    projectId: project.projectId,
+    name: project.name,
+    type: project.type,
+    isOwned: project.isOwned,
+    createdAt: project.createdAt ?? project.created_at,
+    updatedAt: project.updatedAt ?? project.updated_at,
+  };
+}
+
+function recencyKey(project) {
+  const value = project?.updatedAt ?? project?.createdAt ?? 0;
+  const ms = typeof value === 'number' ? value : Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 async function callOmelette(session, method, body = {}) {
@@ -25,9 +38,11 @@ export function selectProject(projects, { projectId, name }) {
   if (projectId) return projects.find((project) => project.projectId === projectId) || { projectId, name: projectId };
   if (!name) throw new Error('design_pull requires projectId or name');
   const lower = String(name).toLowerCase();
-  const project = projects.find((item) => item.name === name) || projects.find((item) => String(item.name).toLowerCase() === lower);
-  if (!project) throw new Error(`remote project not found by name: ${name}`);
-  return project;
+  const exact = projects.filter((item) => item.name === name);
+  const matches = exact.length ? exact : projects.filter((item) => String(item.name).toLowerCase() === lower);
+  if (!matches.length) throw new Error(`remote project not found by name: ${name}`);
+  // Deterministic on name collisions: newest (by updated/created) wins instead of an arbitrary first match.
+  return matches.length === 1 ? matches[0] : [...matches].sort((a, b) => recencyKey(b) - recencyKey(a))[0];
 }
 
 export async function listAllFiles(session, projectId) {

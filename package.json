@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node test/helpers.test.mjs && node test/rpc.test.mjs && node test/turn-classify.test.mjs && node test/pull.test.mjs && node test/turn.test.mjs && node test/mcp.test.mjs",
+    "test": "node test/helpers.test.mjs && node test/rpc.test.mjs && node test/turn-classify.test.mjs && node test/pull.test.mjs && node test/turn.test.mjs && node test/preview.test.mjs && node test/mcp.test.mjs",
     "test:live": "CLAUDE_DESIGN_LIVE=1 node test/live.e2e.mjs"
   },
   "dependencies": {

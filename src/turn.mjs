@@ -56,7 +56,7 @@ export async function tryAnswerQuestions(page) {
 async function runUnlocked(session, projectId, prompt, options) {
   const startedAt = Date.now();
   const timeoutMs = Number(options.timeoutMs || defaultTurnTimeout());
-  const inactivityMs = Number(options.inactivityMs ?? 45_000);
+  const quietMs = Number(options.quietMs ?? process.env.CLAUDE_DESIGN_QUIET_MS ?? 20_000);
   const pollMs = Number(options.pollIntervalMs ?? 2_000);
   const stableCycles = Number(options.stableCycles || 3);
   const ready = options.awaitReady || awaitDesignReady;
@@ -67,7 +67,8 @@ async function runUnlocked(session, projectId, prompt, options) {
   let lastActivity = Date.now();
   const handler = (response) => {
     const kind = classifyTurnRequest(responseUrl(response));
-    if (kind === 'chat' || kind === 'renew') lastActivity = Date.now();
+    // Chat / RenewTurn keepalives / ReleaseTurn all mark the turn as alive; sustained silence = finished.
+    if (kind === 'chat' || kind === 'renew' || kind === 'release') lastActivity = Date.now();
     if (kind === 'release' && responseStatus(response) < 300) released = true;
   };
 
@@ -95,9 +96,13 @@ async function runUnlocked(session, projectId, prompt, options) {
       hasFiles = entries.length > 0;
       if (sig !== baseline) changed = true;
       history.push(sig);
-      if (changed && hasFiles && (released || signatureStable(history, stableCycles))) { stable = true; break; }
+      // Finish only when the design files have SETTLED and the turn network has gone QUIET.
+      // claude.ai keeps a turn alive with RenewTurn keepalives ~every 10s and may split a large
+      // design across several continuation turns; demanding >quietMs of silence (no Chat / RenewTurn
+      // / ReleaseTurn) means we end only after the FINAL turn — never mid-burst, never between
+      // continuations, never racing the ReleaseTurn (the bugs that returned a partial design).
       const now = Date.now();
-      if (changed && hasFiles && now - lastActivity > inactivityMs) { stable = signatureStable(history, 2); break; }
+      if (changed && hasFiles && now - lastActivity > quietMs && signatureStable(history, stableCycles)) { stable = true; break; }
       if (now >= deadline) break;
     }
     return { released, stable, hasFiles, changed, answered, ms: Date.now() - startedAt };

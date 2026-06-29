@@ -67,6 +67,12 @@ function pullCliArgs(rest) {
   return { [key]: target, dir: args[1], zip };
 }
 
+function previewCliArgs(rest) {
+  const target = rest[0];
+  const key = /^[0-9a-f-]{20,}$/i.test(target || '') ? 'projectId' : 'name';
+  return { [key]: target, dir: rest[1], width: rest[2] ? Number(rest[2]) : undefined };
+}
+
 async function runCli(argv) {
   const [cmd, ...rest] = argv;
   try {
@@ -75,11 +81,12 @@ async function runCli(argv) {
     else if (cmd === 'create') console.log(JSON.stringify(await IMPL.design_create({ prompt: rest[0], name: rest[1] }), null, 2));
     else if (cmd === 'iterate') console.log(JSON.stringify(await IMPL.design_iterate({ projectId: rest[0], prompt: rest.slice(1).join(' ') }), null, 2));
     else if (cmd === 'pull') console.log(JSON.stringify(await IMPL.design_pull(pullCliArgs(rest)), null, 2));
+    else if (cmd === 'preview') console.log(JSON.stringify(await IMPL.design_preview(previewCliArgs(rest)), null, 2));
     else if (cmd === 'get') console.log(JSON.stringify(await IMPL.design_get({ projectId: rest[0], path: rest[1] }), null, 2));
     else if (cmd === 'status') console.log(JSON.stringify(await IMPL.design_status({ projectId: rest[0] }), null, 2));
     else if (cmd === 'edit') console.log(JSON.stringify(await IMPL.design_edit({ projectId: rest[0], path: rest[1], edits: [{ oldString: rest[2], newString: rest[3] }] }), null, 2));
     else if (cmd === 'delete') console.log(JSON.stringify(await IMPL.design_delete({ projectId: rest[0] }), null, 2));
-    else console.log('usage: node src/server.mjs <login|list|create|iterate|pull|get|status|edit|delete> ...');
+    else console.log('usage: node src/server.mjs <login|list|create|iterate|pull|preview|get|status|edit|delete> ...');
   } catch (error) {
     console.error('error:', error.message);
     process.exit(1);

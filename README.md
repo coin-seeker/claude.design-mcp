@@ -27,6 +27,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 | `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |
+| `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
@@ -53,6 +54,7 @@ node src/server.mjs list
 node src/server.mjs create "minimal landing page for a coffee shop" coffee
 node src/server.mjs iterate <projectId> "add a dark mode toggle to the header"
 node src/server.mjs pull <projectId|name>
+node src/server.mjs preview <projectId|name> [outDir] [width]
 node src/server.mjs delete <projectId>
 ```
 
@@ -70,6 +72,21 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
 - `CLAUDE_DESIGN_PROFILE` — dedicated Chrome profile dir (default `~/.cache/claude-design-mcp/chrome-profile`)
 - `CLAUDE_DESIGN_CHROME` — path to Google Chrome (default: macOS Google Chrome)
 - `CLAUDE_DESIGN_CDP_PORT` — remote-debugging port (default `9377`)
-- `CLAUDE_DESIGN_DIR` — where `design_pull` writes (default: the working folder)
+- `CLAUDE_DESIGN_DIR` — where `design_pull` / `design_preview` write (default: the working folder)
 - `CLAUDE_DESIGN_HEADLESS` — set `1` to drive headless Chrome instead of off-screen
-- `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — generation-turn timeout (create ~180s, iterate ~120s defaults)
+- `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~420s, iterate ~300s defaults)
+- `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `45000`)
+
+## When is a generation "done"?
+
+`claude.ai/design` drives generation as **turns**: your prompt streams in over a `Chat` RPC,
+kept alive by `RenewTurn` keepalives (~every 10s) and ended by a `ReleaseTurn`. `design_create` /
+`design_iterate` return once the **files have settled AND the turn network has gone quiet** for
+`CLAUDE_DESIGN_QUIET_MS` — comfortably longer than the keepalive interval, so a generation is **never
+cut off mid-write** (you always get a complete, coherent design, not a half-rendered one).
+
+Note that claude.ai often runs an **automatic refine pass** that starts ~30s *after* the first design
+settles, so the design keeps improving on the server after the tool has returned its first complete
+version. To get the most-refined output, **`design_pull` / `design_preview` always fetch the latest
+state**, or raise `CLAUDE_DESIGN_QUIET_MS` (e.g. `60000`) to make `create` wait through later refine
+passes (at the cost of a longer wait).

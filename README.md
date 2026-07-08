@@ -14,7 +14,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
   `ReleaseTurn` network signal + file-tree stability) and reports the files Claude Design
   wrote. Files are pulled back to local on request.
 - Project metadata, files, deletes, and direct file edits use the documented JSON RPCs
-  (`CreateProject` / `ListFiles` / `GetFile` / `WriteFiles` / `EditFile` / `DeleteProject`),
+  (`CreateProject` / `ListFiles` / `GetFile` / `EditFile` / `DeleteProject`),
   run in-page so they share your session + Cloudflare clearance.
 - **Not a `claude -p` mimic.** Every design is produced by claude.ai/design itself.
 
@@ -25,6 +25,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 | `design_login` | One-time: open Chrome to log into claude.ai/design (session persists) |
 | `design_list` | List your claude.ai/design projects |
 | `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?` |
+| `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, `count?`, `axis?`, `name?`, `preview?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
@@ -74,8 +75,8 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
 - `CLAUDE_DESIGN_CDP_PORT` — remote-debugging port (default `9377`)
 - `CLAUDE_DESIGN_DIR` — where `design_pull` / `design_preview` write (default: the working folder)
 - `CLAUDE_DESIGN_HEADLESS` — set `1` to drive headless Chrome instead of off-screen
-- `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~420s, iterate ~300s defaults)
-- `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `45000`)
+- `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~360s, iterate ~240s defaults)
+- `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `20000`)
 
 ## When is a generation "done"?
 
@@ -84,6 +85,10 @@ kept alive by `RenewTurn` keepalives (~every 10s) and ended by a `ReleaseTurn`. 
 `design_iterate` return once the **files have settled AND the turn network has gone quiet** for
 `CLAUDE_DESIGN_QUIET_MS` — comfortably longer than the keepalive interval, so a generation is **never
 cut off mid-write** (you always get a complete, coherent design, not a half-rendered one).
+
+If a generation reaches its hard deadline before the quiet/stability checks complete, the result includes
+`timedOut: true`. Normal completions omit the field entirely; treat its presence as a signal that the
+returned files are the best available snapshot at the timeout rather than a fully quiet turn.
 
 Note that claude.ai often runs an **automatic refine pass** that starts ~30s *after* the first design
 settles, so the design keeps improving on the server after the tool has returned its first complete

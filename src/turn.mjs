@@ -83,6 +83,7 @@ async function runUnlocked(session, projectId, prompt, options) {
     const history = [];
     const deadline = Date.now() + timeoutMs;
     let stable = false;
+    let timedOut = false;
     let hasFiles = false;
     let changed = false;
     let answered = false;
@@ -103,9 +104,13 @@ async function runUnlocked(session, projectId, prompt, options) {
       // continuations, never racing the ReleaseTurn (the bugs that returned a partial design).
       const now = Date.now();
       if (changed && hasFiles && now - lastActivity > quietMs && signatureStable(history, stableCycles)) { stable = true; break; }
-      if (now >= deadline) break;
+      if (now >= deadline) { timedOut = true; break; }
     }
-    return { released, stable, hasFiles, changed, answered, ms: Date.now() - startedAt };
+    return {
+      released, stable, hasFiles, changed, answered, ms: Date.now() - startedAt,
+      // Only present on the deadline path — a normal completion must NOT carry timedOut:false.
+      ...(timedOut ? { timedOut: true } : {}),
+    };
   } finally {
     if (typeof session.page.off === 'function') session.page.off('response', handler);
   }

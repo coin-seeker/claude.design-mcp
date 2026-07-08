@@ -21,6 +21,7 @@ export const TOOLS = [
   { name: 'design_status', description: 'Summarize project data, chat count, and last message role.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
+  { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' } }, ['prompt']) },
 ];
 
 function requireString(value, name) {
@@ -128,4 +129,64 @@ async function design_preview(args = {}) {
   return previewProject(session, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height });
 }
 
-export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_edit, design_delete };
+const VARIANTS_MAX_COUNT = 4;
+const VARIANTS_MAX_CONCURRENCY = 3;
+
+const AXIS_HINTS = {
+  layout: 'Vary the LAYOUT: use a distinctly different page structure, grid, and content arrangement from the other variants.',
+  color: 'Vary the COLOR: use a distinctly different color palette and contrast strategy from the other variants.',
+  typography: 'Vary the TYPOGRAPHY: use distinctly different typefaces, type scale, and text rhythm from the other variants.',
+  mood: 'Vary the MOOD: use a distinctly different overall feel and visual tone from the other variants.',
+};
+
+export function variantPrompt(prompt, axis, index, count) {
+  const hint = AXIS_HINTS[axis] || (axis ? `Vary along this axis: ${axis}.` : 'Use a clearly different mood, layout, and palette from the other variants.');
+  return `${prompt}\n\nThis is variant ${index + 1} of ${count}. ${hint}`;
+}
+
+// Minimal semaphore: at most `limit` jobs run at once, the rest queue in FIFO order.
+export function createPool(limit) {
+  let active = 0;
+  const queue = [];
+  const release = () => {
+    active -= 1;
+    const run = queue.shift();
+    if (run) run();
+  };
+  return (job) => new Promise((resolve, reject) => {
+    const run = () => {
+      active += 1;
+      Promise.resolve().then(job).then(resolve, reject).finally(release);
+    };
+    if (active < limit) run();
+    else queue.push(run);
+  });
+}
+
+export async function design_variants(args = {}, deps = {}) {
+  const prompt = requireString(args.prompt, 'prompt');
+  const count = Math.max(1, Math.min(VARIANTS_MAX_COUNT, Number(args.count) || 3));
+  const axis = args.axis ? String(args.axis) : null;
+  const withPreview = args.preview !== false;
+  const create = deps.create || design_create;
+  const renderPreview = deps.preview || design_preview;
+  const acquire = createPool(deps.concurrency || VARIANTS_MAX_CONCURRENCY);
+  const baseName = derivedName(prompt, args.name);
+  const variants = await Promise.all(Array.from({ length: count }, (_, index) => acquire(async () => {
+    try {
+      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs });
+      if (!withPreview) return { index, ...created, image: null };
+      try {
+        const shot = await renderPreview({ projectId: created.projectId });
+        return { index, ...created, image: shot.image || null };
+      } catch (error) {
+        return { index, ...created, image: null, previewError: String(error?.message || error) };
+      }
+    } catch (error) {
+      return { index, error: String(error?.message || error) };
+    }
+  })));
+  return { prompt, axis, count, variants };
+}
+
+export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_edit, design_delete, design_variants };

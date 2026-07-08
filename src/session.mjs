@@ -127,6 +127,14 @@ async function pageFromBrowser(browser) {
 
 let cachedSession = null;
 
+// Expose the already-connected CDP browser (if any) so other modules (e.g. preview)
+// can open a throwaway page on it instead of launching a separate headless Chrome.
+export function getConnectedBrowser() {
+  const browser = cachedSession?.browser;
+  if (!browser) return null;
+  return browser.isConnected?.() === false ? null : browser;
+}
+
 export async function ensureSession({ visible = false, force = false, fetchImpl = fetch, chromium = playwrightChromium, connect = null } = {}) {
   if (cachedSession && !force) return cachedSession;
   const port = cdpPort();

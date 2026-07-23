@@ -13,8 +13,8 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
-  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' } }, ['prompt']) },
-  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' } }, ['projectId', 'prompt']) },
+  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' } }, ['prompt']) },
+  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
@@ -60,8 +60,10 @@ async function design_create(args = {}) {
   const created = await omelette(session.page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
   const projectId = requireString(created.projectId, 'projectId');
   await awaitDesignReady(session.page, projectId);
-  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000) });
-  return { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn, files: await listAllFiles(session, projectId) };
+  const wait = args.wait !== false;
+  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
+  const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
+  return wait ? { ...result, files: await listAllFiles(session, projectId) } : result;
 }
 
 async function design_iterate(args = {}) {
@@ -69,8 +71,10 @@ async function design_iterate(args = {}) {
   const prompt = requireString(args.prompt, 'prompt');
   const session = await ensureSession({ visible: false });
   await awaitDesignReady(session.page, projectId);
-  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000) });
-  return { projectId, ...turn, files: await listAllFiles(session, projectId) };
+  const wait = args.wait !== false;
+  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait });
+  const result = { projectId, ...turn };
+  return wait ? { ...result, files: await listAllFiles(session, projectId) } : result;
 }
 
 async function design_pull(args = {}) {

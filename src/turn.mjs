@@ -4,6 +4,7 @@ import { awaitDesignReady } from './session.mjs';
 import { classifyTurnRequest, signatureStable, stabilitySignature } from './turn-classify.mjs';
 
 const locks = new Map();
+const SUBMIT_WATCH_MS = 45_000;
 const defaultTurnTimeout = () => Number(process.env.CLAUDE_DESIGN_TURN_TIMEOUT_MS || 300_000);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -63,6 +64,19 @@ async function runUnlocked(session, projectId, prompt, options) {
   const listFiles = options.listFiles || defaultListFiles;
   const answerQuestions = options.answerQuestions || tryAnswerQuestions;
 
+  if (options.wait === false) {
+    await withProjectLock(projectId, async () => {
+      await ready(session.page, projectId);
+      await submitPrompt(session.page, String(prompt));
+    });
+    const deadline = Date.now() + Number(options.submitWatchMs ?? SUBMIT_WATCH_MS);
+    while (Date.now() < deadline) {
+      if (await answerQuestions(session.page)) break;
+      await sleepWithPage(session.page, Math.min(pollMs, deadline - Date.now()));
+    }
+    return { submitted: true, pending: true };
+  }
+
   let released = false;
   let lastActivity = Date.now();
   const handler = (response) => {
@@ -117,5 +131,6 @@ async function runUnlocked(session, projectId, prompt, options) {
 }
 
 export function runGenerateTurn(session, projectId, prompt, options = {}) {
+  if (options.wait === false) return runUnlocked(session, projectId, prompt, options);
   return withProjectLock(projectId, () => runUnlocked(session, projectId, prompt, options));
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { parseGenerateFlags } from './cli.mjs';
 import { IMPL, TOOLS } from './tools.mjs';
 
 function send(message) {
@@ -78,8 +79,13 @@ async function runCli(argv) {
   try {
     if (cmd === 'login') console.log(JSON.stringify(await IMPL.design_login({}), null, 2));
     else if (cmd === 'list') console.log(JSON.stringify(await IMPL.design_list({}), null, 2));
-    else if (cmd === 'create') console.log(JSON.stringify(await IMPL.design_create({ prompt: rest[0], name: rest[1] }), null, 2));
-    else if (cmd === 'iterate') console.log(JSON.stringify(await IMPL.design_iterate({ projectId: rest[0], prompt: rest.slice(1).join(' ') }), null, 2));
+    else if (cmd === 'create') {
+      const { positional, flags } = parseGenerateFlags(rest);
+      console.log(JSON.stringify(await IMPL.design_create({ prompt: positional[0], name: positional[1], ...flags }), null, 2));
+    } else if (cmd === 'iterate') {
+      const { positional, flags } = parseGenerateFlags(rest);
+      console.log(JSON.stringify(await IMPL.design_iterate({ projectId: positional[0], prompt: positional.slice(1).join(' '), ...flags }), null, 2));
+    }
     else if (cmd === 'pull') console.log(JSON.stringify(await IMPL.design_pull(pullCliArgs(rest)), null, 2));
     else if (cmd === 'preview') console.log(JSON.stringify(await IMPL.design_preview(previewCliArgs(rest)), null, 2));
     else if (cmd === 'get') console.log(JSON.stringify(await IMPL.design_get({ projectId: rest[0], path: rest[1] }), null, 2));

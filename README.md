@@ -24,13 +24,14 @@ claude.ai/design generates **on your own account** (not a local imitation).
 |------|------|
 | `design_login` | One-time: open Chrome to log into claude.ai/design (session persists) |
 | `design_list` | List your claude.ai/design projects |
-| `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?` |
-| `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, `count?`, `axis?`, `name?`, `preview?` |
-| `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt` |
+| `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?`, `wait?`, `model?` |
+| `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, `count?`, `axis?`, `name?`, `preview?`, `model?` |
+| `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
+| `design_check` | Poll an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, or `no_output` |
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId` |
 
@@ -52,8 +53,9 @@ Register as a local MCP (opencode example):
 ```bash
 node src/server.mjs login
 node src/server.mjs list
-node src/server.mjs create "minimal landing page for a coffee shop" coffee
-node src/server.mjs iterate <projectId> "add a dark mode toggle to the header"
+node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus
+node src/server.mjs iterate <projectId> "add a dark mode toggle to the header" --model sonnet
+node src/server.mjs check <projectId>
 node src/server.mjs pull <projectId|name>
 node src/server.mjs preview <projectId|name> [outDir] [width]
 node src/server.mjs delete <projectId>
@@ -61,6 +63,36 @@ node src/server.mjs delete <projectId>
 
 After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visible window**
 (off-screen Chrome) and reuse the persisted session.
+
+## Generation options
+
+- `design_create`, `design_iterate`, and `design_variants` accept an optional `model`.
+  The aliases `opus` and `sonnet` are normalized to `claude-opus-4-8` and
+  `claude-sonnet-5`. For CLI `create` and `iterate`, pass `--model opus` (or `sonnet`).
+- `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
+  to return immediately after submission with `{ submitted: true, pending: true }`;
+  the CLI equivalent is `--no-wait`.
+- Poll submitted work with `design_check({ projectId })`, or
+  `node src/server.mjs check <projectId>`. Its `status` is `generating`,
+  `awaiting_input`, `done`, or `no_output`.
+
+## Asynchronous workflow
+
+```bash
+# 1. Submit without waiting
+node src/server.mjs create "카드 UI" my-card --no-wait --model opus
+# → { projectId: "...", submitted: true, pending: true }
+
+# 2. Continue with other work...
+
+# 3. Poll for completion (every 2-5 minutes is recommended)
+node src/server.mjs check <projectId>
+# → { status: "done", files: [...] }
+
+# 4. Pull and preview the finished design
+node src/server.mjs pull <projectId>
+node src/server.mjs preview <projectId>
+```
 
 ## Requirements
 

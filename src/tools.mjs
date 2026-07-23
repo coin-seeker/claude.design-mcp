@@ -1,4 +1,5 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
+import { checkDesign } from './check.mjs';
 import { previewProject } from './preview.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
@@ -19,6 +20,7 @@ export const TOOLS = [
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
   { name: 'design_status', description: 'Summarize project data, chat count, and last message role.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
+  { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' } }, ['prompt']) },
@@ -114,6 +116,11 @@ async function design_status(args = {}) {
   return { projectId, chats: chats.length, messages: messages.length, lastMessageRole: last?.role || null };
 }
 
+async function design_check(args = {}) {
+  const projectId = requireString(args.projectId, 'projectId');
+  return checkDesign(await ensureSession({ visible: false }), projectId);
+}
+
 async function design_edit(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const filePath = requireString(args.path, 'path');
@@ -193,4 +200,4 @@ export async function design_variants(args = {}, deps = {}) {
   return { prompt, axis, count, variants };
 }
 
-export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_edit, design_delete, design_variants };
+export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_check, design_edit, design_delete, design_variants };

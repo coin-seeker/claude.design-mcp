@@ -45,13 +45,23 @@ async function submitPrompt(page, prompt) {
 export async function tryAnswerQuestions(page) {
   const cont = page.locator('button:has-text("Continue")').first();
   let visible = false;
-  try { visible = (await cont.count()) > 0 && await cont.isVisible(); } catch { return false; }
+  try { visible = (await cont.count()) > 0 && await cont.isVisible(); }
+  catch (error) {
+    const message = error?.message || '';
+    if (message.includes('closed') || message.includes('disconnected') || message.includes('Target')) throw error;
+    return false;
+  }
   if (!visible) return false;
   const decide = await page.locator('button:has-text("Decide for me")').all().catch(() => []);
   for (const button of decide) {
     try { await button.click({ timeout: 1_500 }); await sleepWithPage(page, 200); } catch { /* group may re-render */ }
   }
-  try { await page.locator('button:has-text("Continue")').first().click({ timeout: 3_000 }); return true; } catch { return false; }
+  try { await page.locator('button:has-text("Continue")').first().click({ timeout: 3_000 }); return true; }
+  catch (error) {
+    const message = error?.message || '';
+    if (message.includes('closed') || message.includes('disconnected') || message.includes('Target')) throw error;
+    return false;
+  }
 }
 
 async function runUnlocked(session, projectId, prompt, options) {

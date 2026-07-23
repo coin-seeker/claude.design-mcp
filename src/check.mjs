@@ -54,6 +54,8 @@ export async function checkDesign(session, projectId, deps = {}) {
       answeredQuestions = await answerQuestions(session.page);
     } catch (error) {
       if (isSessionError(error)) throw error;
+      const message = error?.message || '';
+      if (!(error instanceof Error) || !message.match(/locator|selector|element|timeout|visible|count/i)) throw error;
     }
     const [files, lastMessageRole] = await Promise.all([listFiles(), getLastMessageRole()]);
     return {

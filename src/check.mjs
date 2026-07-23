@@ -2,11 +2,11 @@ import { tryAnswerQuestions } from './turn.mjs';
 import { stabilitySignature, signatureStable } from './turn-classify.mjs';
 import { omelette } from './rpc.mjs';
 import { fileEntriesOf } from './helpers.mjs';
+import { isDomTransitionError, isPageError } from './errors.mjs';
 
 const POLL_INTERVAL_MS = 2_000;
 const POLL_CYCLES = 3;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const isSessionError = (error) => /closed|disconnected|Target/.test(String(error?.message || error));
 async function questionFormVisible(page) {
   const continueButton = page.locator('button:has-text("Continue")').first();
   return (await continueButton.count()) > 0 && await continueButton.isVisible();
@@ -45,7 +45,14 @@ export async function checkDesign(session, projectId, deps = {}) {
   try {
     hasQuestionForm = await isQuestionFormVisible(session.page);
   } catch (error) {
-    if (isSessionError(error)) throw error;
+    if (!isDomTransitionError(error)) throw error;
+    return {
+      projectId,
+      status: 'generating',
+      files: [],
+      lastMessageRole: null,
+      answeredQuestions: false,
+    };
   }
 
   if (hasQuestionForm) {
@@ -53,7 +60,7 @@ export async function checkDesign(session, projectId, deps = {}) {
     try {
       answeredQuestions = await answerQuestions(session.page);
     } catch (error) {
-      if (isSessionError(error)) throw error;
+      if (isPageError(error)) throw error;
       const message = error?.message || '';
       if (!(error instanceof Error) || !message.match(/locator|selector|element|timeout|visible|count/i)) throw error;
     }

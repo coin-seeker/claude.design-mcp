@@ -2,6 +2,7 @@ import { fileEntriesOf } from './helpers.mjs';
 import { omelette } from './rpc.mjs';
 import { awaitDesignReady } from './session.mjs';
 import { classifyTurnRequest, signatureStable, stabilitySignature } from './turn-classify.mjs';
+import { isPageError } from './errors.mjs';
 
 const locks = new Map();
 const SUBMIT_WATCH_MS = 45_000;
@@ -47,19 +48,24 @@ export async function tryAnswerQuestions(page) {
   let visible = false;
   try { visible = (await cont.count()) > 0 && await cont.isVisible(); }
   catch (error) {
-    const message = error?.message || '';
-    if (message.includes('closed') || message.includes('disconnected') || message.includes('Target')) throw error;
+    if (isPageError(error)) throw error;
     return false;
   }
   if (!visible) return false;
-  const decide = await page.locator('button:has-text("Decide for me")').all().catch(() => []);
+  const decide = await page.locator('button:has-text("Decide for me")').all().catch((error) => {
+    if (isPageError(error)) throw error;
+    return [];
+  });
   for (const button of decide) {
-    try { await button.click({ timeout: 1_500 }); await sleepWithPage(page, 200); } catch { /* group may re-render */ }
+    try { await button.click({ timeout: 1_500 }); await sleepWithPage(page, 200); }
+    catch (error) {
+      if (isPageError(error)) throw error;
+      // group may re-render
+    }
   }
   try { await page.locator('button:has-text("Continue")').first().click({ timeout: 3_000 }); return true; }
   catch (error) {
-    const message = error?.message || '';
-    if (message.includes('closed') || message.includes('disconnected') || message.includes('Target')) throw error;
+    if (isPageError(error)) throw error;
     return false;
   }
 }

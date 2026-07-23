@@ -10,6 +10,7 @@ export function parseFlags(args, definitions) {
     const argument = args[index];
     const definition = definitions[argument];
     if (!definition) {
+      if (argument.startsWith('--')) throw new Error(`Unknown flag: ${argument}. Supported: ${Object.keys(definitions).join(', ')}`);
       positional.push(argument);
       continue;
     }

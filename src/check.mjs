@@ -6,7 +6,7 @@ import { fileEntriesOf } from './helpers.mjs';
 const POLL_INTERVAL_MS = 2_000;
 const POLL_CYCLES = 3;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
+const isSessionError = (error) => /closed|disconnected|Target/.test(String(error?.message || error));
 async function questionFormVisible(page) {
   const continueButton = page.locator('button:has-text("Continue")').first();
   return (await continueButton.count()) > 0 && await continueButton.isVisible();
@@ -45,7 +45,7 @@ export async function checkDesign(session, projectId, deps = {}) {
   try {
     hasQuestionForm = await isQuestionFormVisible(session.page);
   } catch (error) {
-    void error;
+    if (isSessionError(error)) throw error;
   }
 
   if (hasQuestionForm) {
@@ -53,7 +53,7 @@ export async function checkDesign(session, projectId, deps = {}) {
     try {
       answeredQuestions = await answerQuestions(session.page);
     } catch (error) {
-      void error;
+      if (isSessionError(error)) throw error;
     }
     const [files, lastMessageRole] = await Promise.all([listFiles(), getLastMessageRole()]);
     return {

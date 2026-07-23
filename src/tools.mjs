@@ -1,17 +1,14 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
-import { applyModelToPage, resolveModel } from './model.mjs';
+import { applyModelToPage, resolveOptionalModel, withResolvedModel } from './model.mjs';
 import { checkDesign } from './check.mjs';
 import { previewProject } from './preview.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
 import { awaitDesignReady, ensureSession, loginHelp } from './session.mjs';
 import { runGenerateTurn } from './turn.mjs';
-
 const LOGIN_TIMEOUT_MS = 180_000;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const schema = (properties, required = []) => ({ type: 'object', properties, required });
-
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
@@ -26,17 +23,14 @@ export const TOOLS = [
   { name: 'design_delete', description: 'Delete one Claude Design project.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
 ];
-
 function requireString(value, name) {
   const text = String(value ?? '').trim();
   if (!text) throw new Error(`${name} is required`);
   return text;
 }
-
 function derivedName(prompt, name) {
   return sanitizeName(name || String(prompt).replace(/\s+/g, ' ').slice(0, 64));
 }
-
 async function design_login() {
   const deadline = Date.now() + LOGIN_TIMEOUT_MS;
   let last = null;
@@ -51,45 +45,40 @@ async function design_login() {
   }
   throw last || new Error(loginHelp('login did not complete before timeout'));
 }
-
 async function design_list() {
   return listProjects(await ensureSession({ visible: false }), { refresh: true });
 }
-
 async function design_create(args = {}) {
   const prompt = requireString(args.prompt, 'prompt');
-  const model = args.model ? resolveModel(args.model).apiId : null;
+  const resolvedModel = resolveOptionalModel(args.model);
   const session = await ensureSession({ visible: false });
   const name = derivedName(prompt, args.name);
   const created = await omelette(session.page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
   const projectId = requireString(created.projectId, 'projectId');
   await awaitDesignReady(session.page, projectId);
   const wait = args.wait !== false;
-  if (model) await applyModelToPage(session.page, model);
+  if (resolvedModel) await applyModelToPage(session.page, resolvedModel.apiId);
   const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
   const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
-  return wait ? { ...result, files: await listAllFiles(session, projectId) } : result;
+  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, resolvedModel);
 }
-
 async function design_iterate(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const prompt = requireString(args.prompt, 'prompt');
-  const model = args.model ? resolveModel(args.model).apiId : null;
+  const resolvedModel = resolveOptionalModel(args.model);
   const session = await ensureSession({ visible: false });
   await awaitDesignReady(session.page, projectId);
   const wait = args.wait !== false;
-  if (model) await applyModelToPage(session.page, model);
+  if (resolvedModel) await applyModelToPage(session.page, resolvedModel.apiId);
   const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait });
   const result = { projectId, ...turn };
-  return wait ? { ...result, files: await listAllFiles(session, projectId) } : result;
+  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, resolvedModel);
 }
-
 async function design_pull(args = {}) {
   const session = await ensureSession({ visible: false });
   const project = selectProject(await listProjects(session), { projectId: args.projectId, name: args.name });
   return pullProject(session, project.projectId, args.dir, { zip: Boolean(args.zip) });
 }
-
 function isText(contentType, filePath) {
   return /^text\//i.test(contentType) || /(?:json|javascript|xml|svg|html|css)$/i.test(contentType) || /\.(?:txt|md|json|js|jsx|ts|tsx|css|html|svg)$/i.test(filePath);
 }
@@ -181,7 +170,7 @@ export function createPool(limit) {
 
 export async function design_variants(args = {}, deps = {}) {
   const prompt = requireString(args.prompt, 'prompt');
-  const model = args.model ? resolveModel(args.model).apiId : null;
+  const resolvedModel = resolveOptionalModel(args.model);
   const count = Math.max(1, Math.min(VARIANTS_MAX_COUNT, Number(args.count) || 3));
   const axis = args.axis ? String(args.axis) : null;
   const withPreview = args.preview !== false;
@@ -191,16 +180,16 @@ export async function design_variants(args = {}, deps = {}) {
   const baseName = derivedName(prompt, args.name);
   const variants = await Promise.all(Array.from({ length: count }, (_, index) => acquire(async () => {
     try {
-      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model });
-      if (!withPreview) return { index, ...created, image: null };
+      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model: resolvedModel?.apiId });
+      if (!withPreview) return withResolvedModel({ index, ...created, image: null }, resolvedModel);
       try {
         const shot = await renderPreview({ projectId: created.projectId });
-        return { index, ...created, image: shot.image || null };
+        return withResolvedModel({ index, ...created, image: shot.image || null }, resolvedModel);
       } catch (error) {
-        return { index, ...created, image: null, previewError: String(error?.message || error) };
+        return withResolvedModel({ index, ...created, image: null, previewError: String(error?.message || error) }, resolvedModel);
       }
     } catch (error) {
-      return { index, error: String(error?.message || error) };
+      return withResolvedModel({ index, error: String(error?.message || error) }, resolvedModel);
     }
   })));
   return { prompt, axis, count, variants };

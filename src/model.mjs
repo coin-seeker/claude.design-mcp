@@ -16,6 +16,14 @@ export function resolveModel(model) {
   return resolved;
 }
 
+export function resolveOptionalModel(model) {
+  return model ? resolveModel(model) : null;
+}
+
+export function withResolvedModel(result, resolvedModel) {
+  return resolvedModel ? { ...result, model: resolvedModel.apiId } : result;
+}
+
 export async function applyModelToPage(page, model) {
   const { uiLabel } = resolveModel(model);
   const modelButton = page.locator('button[title="Change model"]').first();

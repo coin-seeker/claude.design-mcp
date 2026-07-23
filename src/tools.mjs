@@ -1,4 +1,5 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
+import { applyModelToPage, resolveModel } from './model.mjs';
 import { checkDesign } from './check.mjs';
 import { previewProject } from './preview.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
@@ -14,8 +15,8 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
-  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' } }, ['prompt']) },
-  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' } }, ['projectId', 'prompt']) },
+  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
+  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
@@ -23,7 +24,7 @@ export const TOOLS = [
   { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
-  { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' } }, ['prompt']) },
+  { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
 ];
 
 function requireString(value, name) {
@@ -57,12 +58,14 @@ async function design_list() {
 
 async function design_create(args = {}) {
   const prompt = requireString(args.prompt, 'prompt');
+  const model = args.model ? resolveModel(args.model).apiId : null;
   const session = await ensureSession({ visible: false });
   const name = derivedName(prompt, args.name);
   const created = await omelette(session.page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
   const projectId = requireString(created.projectId, 'projectId');
   await awaitDesignReady(session.page, projectId);
   const wait = args.wait !== false;
+  if (model) await applyModelToPage(session.page, model);
   const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
   const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
   return wait ? { ...result, files: await listAllFiles(session, projectId) } : result;
@@ -71,9 +74,11 @@ async function design_create(args = {}) {
 async function design_iterate(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const prompt = requireString(args.prompt, 'prompt');
+  const model = args.model ? resolveModel(args.model).apiId : null;
   const session = await ensureSession({ visible: false });
   await awaitDesignReady(session.page, projectId);
   const wait = args.wait !== false;
+  if (model) await applyModelToPage(session.page, model);
   const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait });
   const result = { projectId, ...turn };
   return wait ? { ...result, files: await listAllFiles(session, projectId) } : result;
@@ -176,6 +181,7 @@ export function createPool(limit) {
 
 export async function design_variants(args = {}, deps = {}) {
   const prompt = requireString(args.prompt, 'prompt');
+  const model = args.model ? resolveModel(args.model).apiId : null;
   const count = Math.max(1, Math.min(VARIANTS_MAX_COUNT, Number(args.count) || 3));
   const axis = args.axis ? String(args.axis) : null;
   const withPreview = args.preview !== false;
@@ -185,7 +191,7 @@ export async function design_variants(args = {}, deps = {}) {
   const baseName = derivedName(prompt, args.name);
   const variants = await Promise.all(Array.from({ length: count }, (_, index) => acquire(async () => {
     try {
-      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs });
+      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model });
       if (!withPreview) return { index, ...created, image: null };
       try {
         const shot = await renderPreview({ projectId: created.projectId });

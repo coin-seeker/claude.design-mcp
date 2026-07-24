@@ -147,8 +147,15 @@ export function getConnectedBrowser() {
   return browser.isConnected?.() === false ? null : browser;
 }
 
+function sessionAlive(session) {
+  return session.browser.isConnected?.() !== false && session.page.isClosed?.() !== true;
+}
+
 export async function ensureSession({ visible = false, force = false, fetchImpl = fetch, chromium = playwrightChromium, connect = null } = {}) {
-  if (cachedSession && !force) return cachedSession;
+  if (cachedSession && !force) {
+    if (sessionAlive(cachedSession)) return cachedSession;
+    cachedSession = null;
+  }
   const port = cdpPort();
   try {
     if (!await chromeVersion(port, fetchImpl)) await launchChrome({ visible, fetchImpl });
@@ -157,6 +164,9 @@ export async function ensureSession({ visible = false, force = false, fetchImpl 
     const page = await pageFromBrowser(browser);
     const ready = await waitForReady(page);
     cachedSession = { browser, page, org: ready.org, me: ready.me };
+    browser.once('disconnected', () => {
+      if (cachedSession?.browser === browser) cachedSession = null;
+    });
     return cachedSession;
   } catch (error) {
     if (error instanceof NotLoggedInError) throw error;

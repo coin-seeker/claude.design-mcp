@@ -20,7 +20,7 @@ export const TOOLS = [
   { name: 'design_status', description: 'Summarize project data, chat count, and last message role.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
-  { name: 'design_delete', description: 'Delete one Claude Design project.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
+  { name: 'design_delete', description: 'Delete one Claude Design project. Only call with confirm:true when the user explicitly asked to delete the project.', inputSchema: schema({ projectId: { type: 'string' }, confirm: { type: 'boolean' } }, ['projectId']) },
   { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
 ];
 function requireString(value, name) {
@@ -160,10 +160,15 @@ async function design_edit(args = {}) {
   return withOperationPage(session, (page) => omelette(page, 'EditFile', { projectId, path: filePath, edits: args.edits }, session.org));
 }
 
-async function design_delete(args = {}) {
-  const session = await ensureSession({ visible: false });
+// Deletion is irreversible, so it stays behind an explicit confirm flag the caller must opt into.
+export async function design_delete(args = {}, deps = {}) {
+  if (args.confirm !== true) throw new Error('design_delete requires confirm: true. Only call this when the user explicitly asked to delete the project.');
+  const openSession = deps.ensureSession || ensureSession;
+  const onPage = deps.withOperationPage || withOperationPage;
+  const remove = deps.deleteProject || deleteProject;
+  const session = await openSession({ visible: false });
   const projectId = requireString(args.projectId, 'projectId');
-  return withOperationPage(session, (page) => deleteProject({ ...session, page }, projectId));
+  return onPage(session, (page) => remove({ ...session, page }, projectId));
 }
 
 async function design_preview(args = {}) {

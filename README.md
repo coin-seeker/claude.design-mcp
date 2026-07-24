@@ -33,7 +33,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 | `design_status` | Report a project's chat/turn state — `projectId` |
 | `design_check` | Poll an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, or `no_output` |
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
-| `design_delete` | Delete a project — `projectId` |
+| `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 
 ## Setup
 

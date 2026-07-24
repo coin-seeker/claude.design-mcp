@@ -126,7 +126,7 @@ async function runCli(argv) {
     else if (cmd === 'status') console.log(JSON.stringify(await IMPL.design_status({ projectId: rest[0] }), null, 2));
     else if (cmd === 'check') console.log(JSON.stringify(await IMPL.design_check({ projectId: rest[0] }), null, 2));
     else if (cmd === 'edit') console.log(JSON.stringify(await IMPL.design_edit({ projectId: rest[0], path: rest[1], edits: [{ oldString: rest[2], newString: rest[3] }] }), null, 2));
-    else if (cmd === 'delete') console.log(JSON.stringify(await IMPL.design_delete({ projectId: rest[0] }), null, 2));
+    else if (cmd === 'delete') console.log(JSON.stringify(await IMPL.design_delete({ projectId: rest[0], confirm: true }), null, 2)); // typing the delete subcommand is the confirmation
     else console.log('usage: node src/server.mjs <login|list|create|iterate|pull|preview|get|status|check|edit|delete> ...');
   } catch (error) {
     console.error('error:', error.message);

@@ -24,7 +24,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 |------|------|
 | `design_login` | One-time: open Chrome to log into claude.ai/design (session persists) |
 | `design_list` | List your claude.ai/design projects |
-| `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?`, `wait?`, `model?` |
+| `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?`, `wait?`, `model?`, `fresh?` |
 | `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, `count?`, `axis?`, `name?`, `preview?`, `model?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |
@@ -76,6 +76,11 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
 - `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
   to return immediately after submission with `{ submitted: true, pending: true }`;
   the CLI equivalent is `--no-wait`.
+- `design_create` with an explicit `name` is **find-or-create**: an existing project with
+  that exact name is reused (newest wins on collisions) and the result carries
+  `reused: true`, so repeated calls iterate one project instead of piling up duplicates.
+  Pass `fresh: true` to force a new project. Without `name` (prompt-derived name), every
+  call creates a new project as before.
 - Poll submitted work with `design_check({ projectId })`, or
   `node src/server.mjs check <projectId>`. Its `status` is `generating`,
   `awaiting_input`, `done`, or `no_output`.

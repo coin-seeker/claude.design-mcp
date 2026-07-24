@@ -12,7 +12,7 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
-  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
+  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
   { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
@@ -49,6 +49,28 @@ async function design_list() {
   const session = await ensureSession({ visible: false });
   return withOperationPage(session, (page) => listProjects({ ...session, page }, { refresh: true }));
 }
+function recencyKey(project) {
+  const value = project?.updatedAt ?? project?.createdAt ?? 0;
+  const ms = typeof value === 'number' ? value : Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+// Reuse an existing project only when the caller pinned an explicit name and did not ask for a fresh one.
+// A derived (prompt-based) name stays create-only so repeated prompts never collide with old work.
+export async function findOrCreateProject(scoped, name, args = {}, deps = {}) {
+  const list = deps.listProjects || listProjects;
+  const call = deps.omelette || omelette;
+  if (args.name && args.fresh !== true) {
+    const projects = await list(scoped, { refresh: true });
+    const target = name.normalize('NFC');
+    const matches = (Array.isArray(projects) ? projects : []).filter((project) => String(project?.name ?? '').normalize('NFC') === target);
+    const found = matches.length > 1 ? [...matches].sort((a, b) => recencyKey(b) - recencyKey(a))[0] : matches[0];
+    if (found?.projectId) return { projectId: String(found.projectId), reused: true };
+  }
+  const created = await call(scoped.page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, scoped.org);
+  return { projectId: requireString(created?.projectId, 'projectId'), reused: false };
+}
+
 async function design_create(args = {}) {
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
@@ -56,13 +78,13 @@ async function design_create(args = {}) {
   const name = derivedName(prompt, args.name);
   return withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
-    const created = await omelette(page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
-    const projectId = requireString(created.projectId, 'projectId');
+    const { projectId, reused } = await findOrCreateProject(scoped, name, args);
     await awaitDesignReady(page, projectId);
     const wait = args.wait !== false;
     const selectedModel = modelRequest ? await applyModelToPage(page, modelRequest) : null;
     const turn = await runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
     const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
+    if (reused) result.reused = true;
     return withResolvedModel(wait ? { ...result, files: await listAllFiles(scoped, projectId) } : result, selectedModel);
   });
 }

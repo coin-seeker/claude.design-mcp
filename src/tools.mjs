@@ -50,29 +50,29 @@ async function design_list() {
 }
 async function design_create(args = {}) {
   const prompt = requireString(args.prompt, 'prompt');
-  const resolvedModel = resolveOptionalModel(args.model);
+  const modelRequest = resolveOptionalModel(args.model);
   const session = await ensureSession({ visible: false });
   const name = derivedName(prompt, args.name);
   const created = await omelette(session.page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
   const projectId = requireString(created.projectId, 'projectId');
   await awaitDesignReady(session.page, projectId);
   const wait = args.wait !== false;
-  if (resolvedModel) await applyModelToPage(session.page, resolvedModel.apiId);
+  const selectedModel = modelRequest ? await applyModelToPage(session.page, modelRequest) : null;
   const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
   const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
-  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, resolvedModel);
+  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, selectedModel);
 }
 async function design_iterate(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const prompt = requireString(args.prompt, 'prompt');
-  const resolvedModel = resolveOptionalModel(args.model);
+  const modelRequest = resolveOptionalModel(args.model);
   const session = await ensureSession({ visible: false });
   await awaitDesignReady(session.page, projectId);
   const wait = args.wait !== false;
-  if (resolvedModel) await applyModelToPage(session.page, resolvedModel.apiId);
+  const selectedModel = modelRequest ? await applyModelToPage(session.page, modelRequest) : null;
   const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait });
   const result = { projectId, ...turn };
-  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, resolvedModel);
+  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, selectedModel);
 }
 async function design_pull(args = {}) {
   const session = await ensureSession({ visible: false });
@@ -170,7 +170,8 @@ export function createPool(limit) {
 
 export async function design_variants(args = {}, deps = {}) {
   const prompt = requireString(args.prompt, 'prompt');
-  const resolvedModel = resolveOptionalModel(args.model);
+  const modelRequest = resolveOptionalModel(args.model);
+  const model = modelRequest ? `${modelRequest.family}${modelRequest.version ? `-${modelRequest.version}` : ''}` : undefined;
   const count = Math.max(1, Math.min(VARIANTS_MAX_COUNT, Number(args.count) || 3));
   const axis = args.axis ? String(args.axis) : null;
   const withPreview = args.preview !== false;
@@ -180,16 +181,16 @@ export async function design_variants(args = {}, deps = {}) {
   const baseName = derivedName(prompt, args.name);
   const variants = await Promise.all(Array.from({ length: count }, (_, index) => acquire(async () => {
     try {
-      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model: resolvedModel?.apiId });
-      if (!withPreview) return withResolvedModel({ index, ...created, image: null }, resolvedModel);
+      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model });
+      if (!withPreview) return { index, ...created, image: null };
       try {
         const shot = await renderPreview({ projectId: created.projectId });
-        return withResolvedModel({ index, ...created, image: shot.image || null }, resolvedModel);
+        return { index, ...created, image: shot.image || null };
       } catch (error) {
-        return withResolvedModel({ index, ...created, image: null, previewError: String(error?.message || error) }, resolvedModel);
+        return { index, ...created, image: null, previewError: String(error?.message || error) };
       }
     } catch (error) {
-      return withResolvedModel({ index, error: String(error?.message || error) }, resolvedModel);
+      return { index, error: String(error?.message || error) };
     }
   })));
   return { prompt, axis, count, variants };

@@ -67,8 +67,12 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
 ## Generation options
 
 - `design_create`, `design_iterate`, and `design_variants` accept an optional `model`.
-  The aliases `opus` and `sonnet` are normalized to `claude-opus-4-8` and
-  `claude-sonnet-5`. For CLI `create` and `iterate`, pass `--model opus` (or `sonnet`).
+  Use a family (`opus`, `sonnet`, `haiku`, or `fable`) to select that family's newest
+  version from the live claude.ai/design menu. Pin a version with forms such as
+  `opus-4.8`, `opus-5`, `opus 5.0`, `claude-opus-4-8`, or
+  `anthropic/claude-opus-5`. New family versions become available automatically when
+  they appear in the site menu. If a requested version is unavailable, the error lists
+  the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
 - `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
   to return immediately after submission with `{ submitted: true, pending: true }`;
   the CLI equivalent is `--no-wait`.

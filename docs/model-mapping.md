@@ -37,10 +37,10 @@
 T2는 다음 순서의 UI 조작으로 구현한다.
 
 1. `button[title="Change model"]`을 클릭한다.
-2. 요청된 UI label과 일치하는 `[role="menuitemradio"]`를 클릭한다.
+2. `[role="menuitemradio"]` 전체 라벨을 수집하고 요청 패밀리·버전과 동적으로 매칭한다. 패밀리만 지정하면 숫자 버전이 가장 높은 항목을 선택한다.
 3. `[data-testid="confirm-dialog-confirm"]`이 나타나면 `Switch model`을 클릭한다.
 4. 버튼 text가 요청 모델로 바뀐 것을 확인한 뒤 prompt를 전송한다.
-5. 지원하지 않는 모델은 경고와 함께 기본 모델을 유지한다.
+5. 매칭되지 않으면 메뉴를 닫고 라이브 모델 목록이 포함된 오류를 반환한다.
 
 요청 body 직접 주입은 선택하지 않는다. body가 단순 JSON POST가 아니라 gzip + Connect/Protobuf framing이며, UI가 모델 변경 확인 및 대화 재읽기 상태까지 관리하기 때문이다. 현재 DOM selector가 라이브에서 동작했고, 결과 `Chat` body의 `model` 값도 선택과 일치했다.
 

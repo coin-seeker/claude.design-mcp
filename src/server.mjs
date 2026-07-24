@@ -17,6 +17,7 @@ async function handle(message) {
     return;
   }
   if (method === 'notifications/initialized') return;
+  if (method === 'notifications/cancelled') return;
   if (method === 'ping') {
     send({ jsonrpc: '2.0', id, result: {} });
     return;
@@ -42,8 +43,29 @@ async function handle(message) {
   if (id !== undefined) send({ jsonrpc: '2.0', id, error: { code: -32601, message: `unknown method ${method}` } });
 }
 
+function onLineError(error) {
+  process.stderr.write(`parse/handle error: ${error.message}\n`);
+  if (error instanceof SyntaxError) send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } });
+}
+
+// stdout pipes are async on macOS, so exit only once the last response has drained;
+// the unref'd timer still force-exits if a CDP handle keeps the loop alive.
+function scheduleExit() {
+  process.exitCode = 0;
+  setTimeout(() => process.exit(0), 50).unref();
+}
+
 function runMcp() {
   let buffer = '';
+  process.on('uncaughtException', (error) => {
+    process.stderr.write(`uncaughtException: ${error?.stack || error}\n`);
+  });
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(`unhandledRejection: ${reason?.stack || reason}\n`);
+  });
+  process.stdout.on('error', (error) => {
+    if (error.code !== 'EPIPE') throw error;
+  });
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => {
     buffer += chunk;
@@ -54,8 +76,20 @@ function runMcp() {
       if (!line) continue;
       Promise.resolve()
         .then(() => handle(JSON.parse(line)))
-        .catch((error) => process.stderr.write(`parse/handle error: ${error.message}\n`));
+        .catch(onLineError);
     }
+  });
+  process.stdin.on('end', () => {
+    const line = buffer.trim();
+    buffer = '';
+    if (!line) {
+      scheduleExit();
+      return;
+    }
+    Promise.resolve()
+      .then(() => handle(JSON.parse(line)))
+      .catch(onLineError)
+      .finally(scheduleExit);
   });
   process.stderr.write('claude.design-mcp ready (stdio)\n');
 }

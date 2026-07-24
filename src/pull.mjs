@@ -5,6 +5,27 @@ import { decodeToBuffer, expandHome, fileEntriesOf, sanitizeName, sanitizeRelPat
 import { downloadZipExpression, omelette } from './rpc.mjs';
 
 export const DEFAULT_OUT = process.env.CLAUDE_DESIGN_DIR || process.cwd();
+const PULL_CONCURRENCY = 4;
+const THUMBNAIL_NAME = '.thumbnail';
+
+// Private twin of tools.mjs createPool: tools.mjs already imports this module, so importing back would cycle.
+function createParallelPool(limit) {
+  let active = 0;
+  const queue = [];
+  const release = () => {
+    active -= 1;
+    const run = queue.shift();
+    if (run) run();
+  };
+  return (job) => new Promise((resolve, reject) => {
+    const run = () => {
+      active += 1;
+      Promise.resolve().then(job).then(resolve, reject).finally(release);
+    };
+    if (active < limit) run();
+    else queue.push(run);
+  });
+}
 
 function projectView(project) {
   return {
@@ -63,6 +84,20 @@ export async function downloadZip(session, projectId) {
   return decodeToBuffer(zip.content);
 }
 
+async function writeRemoteFile(session, projectId, entry, root) {
+  const rel = sanitizeRelPath(entry.path, root).normalize('NFC');
+  try {
+    const file = await callOmelette(session, 'GetFile', { projectId, path: entry.path });
+    const bytes = decodeToBuffer(file.content || '');
+    const target = path.join(root, rel);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, bytes);
+    return { path: rel, bytes: bytes.length };
+  } catch (error) {
+    return { path: rel, error: String(error?.message || error) };
+  }
+}
+
 export async function pullProject(session, projectId, outDir = DEFAULT_OUT, { zip = false } = {}) {
   const project = selectProject(await listProjects(session), { projectId });
   const baseDir = path.resolve(expandHome(outDir || DEFAULT_OUT));
@@ -74,21 +109,23 @@ export async function pullProject(session, projectId, outDir = DEFAULT_OUT, { zi
     await writeFile(file, bytes);
     return { project, dir: baseDir, files: [{ path: file, bytes: bytes.length }] };
   }
-  const root = path.join(baseDir, safeName);
+  const root = path.join(baseDir, safeName).normalize('NFC');
   await mkdir(root, { recursive: true });
   const entries = await listAllFiles(session, project.projectId);
-  const files = [];
-  for (const entry of entries) {
-    if (entry.type === 'directory' || !entry.path) continue;
-    const file = await callOmelette(session, 'GetFile', { projectId: project.projectId, path: entry.path });
-    const bytes = decodeToBuffer(file.content || '');
-    const rel = sanitizeRelPath(entry.path, root);
-    const target = path.join(root, rel);
-    await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, bytes);
-    files.push({ path: rel, bytes: bytes.length });
-  }
-  return { project, dir: root, files };
+  const targets = entries.filter((entry) => entry.type !== 'directory' && entry.path);
+  const acquire = createParallelPool(PULL_CONCURRENCY);
+  // Promise.all keeps the ListFiles order; a single failed GetFile is reported instead of aborting the pull.
+  const results = await Promise.all(targets.map((entry) => acquire(() => writeRemoteFile(session, project.projectId, entry, root))));
+  const files = results.filter((result) => result.error === undefined);
+  const errors = results.filter((result) => result.error !== undefined);
+  const thumb = files.find((file) => path.basename(file.path) === THUMBNAIL_NAME);
+  return {
+    project,
+    dir: root,
+    files,
+    ...(errors.length ? { errors } : {}),
+    ...(thumb ? { thumbnail: path.join(root, thumb.path).normalize('NFC') } : {}),
+  };
 }
 
 export async function deleteProject(session, projectId) {

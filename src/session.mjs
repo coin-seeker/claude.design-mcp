@@ -175,6 +175,19 @@ export async function ensureSession({ visible = false, force = false, fetchImpl 
   }
 }
 
+// Every tool call runs on its own throwaway page: parallel tools used to share the one
+// cached session.page, so a second call's navigation ripped the first call's tab away.
+export async function withOperationPage(session, fn) {
+  const context = session.browser.contexts()[0] || (await session.browser.newContext());
+  const page = await context.newPage();
+  await page.goto(DESIGN_URL, { waitUntil: 'domcontentloaded' });
+  try {
+    return await fn(page);
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 export async function awaitDesignReady(page, projectId) {
   await page.goto(`${DESIGN_URL}/p/${projectId}`, { waitUntil: 'domcontentloaded' });
   const ready = await waitForReady(page);

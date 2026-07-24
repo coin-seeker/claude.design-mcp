@@ -4,7 +4,7 @@ import { checkDesign } from './check.mjs';
 import { previewProject } from './preview.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
-import { awaitDesignReady, ensureSession, loginHelp } from './session.mjs';
+import { awaitDesignReady, ensureSession, loginHelp, withOperationPage } from './session.mjs';
 import { runGenerateTurn } from './turn.mjs';
 const LOGIN_TIMEOUT_MS = 180_000;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,38 +46,48 @@ async function design_login() {
   throw last || new Error(loginHelp('login did not complete before timeout'));
 }
 async function design_list() {
-  return listProjects(await ensureSession({ visible: false }), { refresh: true });
+  const session = await ensureSession({ visible: false });
+  return withOperationPage(session, (page) => listProjects({ ...session, page }, { refresh: true }));
 }
 async function design_create(args = {}) {
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
   const session = await ensureSession({ visible: false });
   const name = derivedName(prompt, args.name);
-  const created = await omelette(session.page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
-  const projectId = requireString(created.projectId, 'projectId');
-  await awaitDesignReady(session.page, projectId);
-  const wait = args.wait !== false;
-  const selectedModel = modelRequest ? await applyModelToPage(session.page, modelRequest) : null;
-  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
-  const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
-  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, selectedModel);
+  return withOperationPage(session, async (page) => {
+    const scoped = { ...session, page };
+    const created = await omelette(page, 'CreateProject', { name, type: 'PROJECT_TYPE_PROJECT' }, session.org);
+    const projectId = requireString(created.projectId, 'projectId');
+    await awaitDesignReady(page, projectId);
+    const wait = args.wait !== false;
+    const selectedModel = modelRequest ? await applyModelToPage(page, modelRequest) : null;
+    const turn = await runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
+    const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
+    return withResolvedModel(wait ? { ...result, files: await listAllFiles(scoped, projectId) } : result, selectedModel);
+  });
 }
 async function design_iterate(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
   const session = await ensureSession({ visible: false });
-  await awaitDesignReady(session.page, projectId);
-  const wait = args.wait !== false;
-  const selectedModel = modelRequest ? await applyModelToPage(session.page, modelRequest) : null;
-  const turn = await runGenerateTurn(session, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait });
-  const result = { projectId, ...turn };
-  return withResolvedModel(wait ? { ...result, files: await listAllFiles(session, projectId) } : result, selectedModel);
+  return withOperationPage(session, async (page) => {
+    const scoped = { ...session, page };
+    await awaitDesignReady(page, projectId);
+    const wait = args.wait !== false;
+    const selectedModel = modelRequest ? await applyModelToPage(page, modelRequest) : null;
+    const turn = await runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait });
+    const result = { projectId, ...turn };
+    return withResolvedModel(wait ? { ...result, files: await listAllFiles(scoped, projectId) } : result, selectedModel);
+  });
 }
 async function design_pull(args = {}) {
   const session = await ensureSession({ visible: false });
-  const project = selectProject(await listProjects(session), { projectId: args.projectId, name: args.name });
-  return pullProject(session, project.projectId, args.dir, { zip: Boolean(args.zip) });
+  return withOperationPage(session, async (page) => {
+    const scoped = { ...session, page };
+    const project = selectProject(await listProjects(scoped), { projectId: args.projectId, name: args.name });
+    return pullProject(scoped, project.projectId, args.dir, { zip: Boolean(args.zip) });
+  });
 }
 function isText(contentType, filePath) {
   return /^text\//i.test(contentType) || /(?:json|javascript|xml|svg|html|css)$/i.test(contentType) || /\.(?:txt|md|json|js|jsx|ts|tsx|css|html|svg)$/i.test(filePath);
@@ -87,11 +97,13 @@ async function design_get(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const filePath = requireString(args.path, 'path');
   const session = await ensureSession({ visible: false });
-  const file = await omelette(session.page, 'GetFile', { projectId, path: filePath }, session.org);
-  const bytes = decodeToBuffer(file.content || '');
-  const contentType = String(file.contentType || 'application/octet-stream');
-  if (isText(contentType, filePath)) return { projectId, path: filePath, contentType, version: file.version, text: bytes.toString('utf8') };
-  return { projectId, path: filePath, contentType, version: file.version, binary: true, bytes: bytes.length };
+  return withOperationPage(session, async (page) => {
+    const file = await omelette(page, 'GetFile', { projectId, path: filePath }, session.org);
+    const bytes = decodeToBuffer(file.content || '');
+    const contentType = String(file.contentType || 'application/octet-stream');
+    if (isText(contentType, filePath)) return { projectId, path: filePath, contentType, version: file.version, text: bytes.toString('utf8') };
+    return { projectId, path: filePath, contentType, version: file.version, binary: true, bytes: bytes.length };
+  });
 }
 
 function parseProjectData(data) {
@@ -102,17 +114,20 @@ function parseProjectData(data) {
 async function design_status(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const session = await ensureSession({ visible: false });
-  const raw = await omelette(session.page, 'GetProjectData', { projectId }, session.org);
-  const data = parseProjectData(raw);
-  const chats = Object.values(data.chats || {});
-  const messages = chats.flatMap((chat) => Array.isArray(chat.messages) ? chat.messages : []);
-  const last = messages.at(-1) || null;
-  return { projectId, chats: chats.length, messages: messages.length, lastMessageRole: last?.role || null };
+  return withOperationPage(session, async (page) => {
+    const raw = await omelette(page, 'GetProjectData', { projectId }, session.org);
+    const data = parseProjectData(raw);
+    const chats = Object.values(data.chats || {});
+    const messages = chats.flatMap((chat) => Array.isArray(chat.messages) ? chat.messages : []);
+    const last = messages.at(-1) || null;
+    return { projectId, chats: chats.length, messages: messages.length, lastMessageRole: last?.role || null };
+  });
 }
 
 async function design_check(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
-  return checkDesign(await ensureSession({ visible: false }), projectId);
+  const session = await ensureSession({ visible: false });
+  return withOperationPage(session, (page) => checkDesign({ ...session, page }, projectId));
 }
 
 async function design_edit(args = {}) {
@@ -120,18 +135,22 @@ async function design_edit(args = {}) {
   const filePath = requireString(args.path, 'path');
   if (!Array.isArray(args.edits)) throw new Error('edits must be an array');
   const session = await ensureSession({ visible: false });
-  return omelette(session.page, 'EditFile', { projectId, path: filePath, edits: args.edits }, session.org);
+  return withOperationPage(session, (page) => omelette(page, 'EditFile', { projectId, path: filePath, edits: args.edits }, session.org));
 }
 
 async function design_delete(args = {}) {
   const session = await ensureSession({ visible: false });
-  return deleteProject(session, requireString(args.projectId, 'projectId'));
+  const projectId = requireString(args.projectId, 'projectId');
+  return withOperationPage(session, (page) => deleteProject({ ...session, page }, projectId));
 }
 
 async function design_preview(args = {}) {
   const session = await ensureSession({ visible: false });
-  const project = selectProject(await listProjects(session), { projectId: args.projectId, name: args.name });
-  return previewProject(session, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height });
+  return withOperationPage(session, async (page) => {
+    const scoped = { ...session, page };
+    const project = selectProject(await listProjects(scoped), { projectId: args.projectId, name: args.name });
+    return previewProject(scoped, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height });
+  });
 }
 
 const VARIANTS_MAX_COUNT = 4;

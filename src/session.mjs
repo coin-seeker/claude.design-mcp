@@ -26,6 +26,13 @@ export class NotLoggedInError extends Error {
   }
 }
 
+export class SessionStartError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SessionStartError';
+  }
+}
+
 export function loginHelp(detail) {
   const suffix = detail ? ` Detail: ${detail}` : '';
   return `Not logged in to Claude Design. Run design_login, then retry. If Chrome cannot start, check CLAUDE_DESIGN_CHROME.${suffix}`;
@@ -95,19 +102,24 @@ async function probePage(page) {
     const me = await omelette(page, 'GetMe', {}, cookieOrg);
     const text = String(me?.__text || '');
     const org = cookieOrg || orgFromMe(me);
-    if (org && !CF_TEXT.test(text)) return { org, me };
+    if (org && !CF_TEXT.test(text)) return { result: { org, me }, lastError: null };
+    return { result: null, lastError: org ? 'Cloudflare interstitial still rendering' : 'GetMe returned no organization uuid' };
   } catch (error) {
-    if (!CF_TEXT.test(String(error?.message || error))) return null;
+    return { result: null, lastError: String(error?.message || error) };
   }
-  return null;
 }
 
 async function waitForReady(page, timeoutMs = readyTimeout()) {
   const deadline = Date.now() + timeoutMs;
+  let lastError = null;
   for (;;) {
-    const ready = await probePage(page);
-    if (ready) return ready;
-    if (Date.now() >= deadline) throw new NotLoggedInError(loginHelp('login required or Cloudflare not cleared in time'));
+    const probe = await probePage(page);
+    if (probe.result) return probe.result;
+    if (probe.lastError) lastError = probe.lastError;
+    if (Date.now() >= deadline) {
+      const detail = `login required or Cloudflare not cleared in time${lastError ? `; last probe error: ${lastError}` : ''}`;
+      throw new NotLoggedInError(loginHelp(detail));
+    }
     await delay(2_500);
   }
 }
@@ -148,7 +160,8 @@ export async function ensureSession({ visible = false, force = false, fetchImpl 
     return cachedSession;
   } catch (error) {
     if (error instanceof NotLoggedInError) throw error;
-    throw new NotLoggedInError(loginHelp(error instanceof Error ? error.message : String(error)));
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new SessionStartError(`Chrome/CDP session could not start (port ${port}): ${detail}. Check CLAUDE_DESIGN_CHROME or a conflicting Chrome on this port.`);
   }
 }
 

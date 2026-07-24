@@ -171,7 +171,7 @@ async function design_preview(args = {}) {
   return withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
     const project = selectProject(await listProjects(scoped), { projectId: args.projectId, name: args.name });
-    return previewProject(scoped, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height });
+    return previewProject(scoped, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height, projectName: project.name });
   });
 }
 

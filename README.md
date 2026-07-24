@@ -114,7 +114,7 @@ node src/server.mjs preview <projectId>
 - `CLAUDE_DESIGN_PROFILE` — dedicated Chrome profile dir (default `~/.cache/claude-design-mcp/chrome-profile`)
 - `CLAUDE_DESIGN_CHROME` — path to Google Chrome (default: macOS Google Chrome)
 - `CLAUDE_DESIGN_CDP_PORT` — remote-debugging port (default `9377`)
-- `CLAUDE_DESIGN_DIR` — where `design_pull` / `design_preview` write (default: the working folder)
+- `CLAUDE_DESIGN_DIR` — where `design_pull` / `design_preview` write, each into its own `<project>/` folder (default: the working folder); an explicit `dir` argument is used verbatim
 - `CLAUDE_DESIGN_HEADLESS` — set `1` to drive headless Chrome instead of off-screen
 - `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~360s, iterate ~240s defaults)
 - `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `20000`)

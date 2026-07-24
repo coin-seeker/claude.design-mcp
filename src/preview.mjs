@@ -4,10 +4,12 @@ import path from 'node:path';
 import { chromium as playwrightChromium } from 'playwright-core';
 
 import { decodeToBuffer, expandHome, fileEntriesOf, sanitizeName } from './helpers.mjs';
+import { listAllFiles } from './pull.mjs';
 import { omelette } from './rpc.mjs';
 import { chromeBin, getConnectedBrowser } from './session.mjs';
 
 export const previewOut = () => process.env.CLAUDE_DESIGN_DIR || process.cwd();
+export const PREVIEW_TIMEOUT_MS = 90_000;
 
 // Choose the file to render: an explicit path, else index.html, else any .html, else the first file.
 export function pickHtmlPath(entries, explicit) {
@@ -53,17 +55,37 @@ export async function renderHtmlToPng(html, outFile, options = {}) {
   }
 }
 
+// listAllFiles already returns entries; a raw ListFiles payload still needs unwrapping.
+function entriesOf(listed) {
+  return Array.isArray(listed) ? listed : fileEntriesOf(listed);
+}
+
+function timeoutLabel(ms) {
+  return ms >= 1_000 ? `${Math.round(ms / 1_000)}s` : `${ms}ms`;
+}
+
 export async function previewProject(session, projectId, options = {}, deps = {}) {
-  const listFiles = deps.listFiles || ((id) => omelette(session.page, 'ListFiles', { projectId: id, depth: 100, offset: 0 }, session.org));
+  const listFiles = deps.listFiles || ((id) => listAllFiles(session, id));
   const getFile = deps.getFile || ((id, filePath) => omelette(session.page, 'GetFile', { projectId: id, path: filePath }, session.org));
   const render = deps.render || renderHtmlToPng;
-  const entries = fileEntriesOf(await listFiles(projectId));
+  const timeoutMs = Number(deps.timeoutMs ?? PREVIEW_TIMEOUT_MS);
+  const entries = entriesOf(await listFiles(projectId));
   const target = pickHtmlPath(entries, options.path);
   if (!target) throw new Error('design_preview: no HTML file found to render in project');
   const file = await getFile(projectId, target);
   const html = decodeToBuffer(file.content || '').toString('utf8');
   const baseDir = path.resolve(expandHome(options.out || previewOut()));
-  const outFile = path.join(baseDir, `${sanitizeName(String(target).replace(/[\\/]+/g, '-'))}.png`);
-  const pageSize = await render(html, outFile, { width: options.width, height: options.height });
-  return { projectId, path: target, image: outFile, pageSize };
+  // An explicit dir is used verbatim; the default lands under a per-project folder so shots never collide.
+  const outDir = options.out ? baseDir : path.join(baseDir, sanitizeName(options.projectName || projectId));
+  const outFile = path.join(outDir, `${sanitizeName(String(target).replace(/[\\/]+/g, '-'))}.png`);
+  let timer;
+  const expiry = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`design_preview: render timed out after ${timeoutLabel(timeoutMs)}`)), timeoutMs);
+  });
+  try {
+    const pageSize = await Promise.race([render(html, outFile, { width: options.width, height: options.height }), expiry]);
+    return { projectId, path: String(target).normalize('NFC'), image: outFile.normalize('NFC'), pageSize };
+  } finally {
+    clearTimeout(timer);
+  }
 }

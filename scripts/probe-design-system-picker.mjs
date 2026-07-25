@@ -23,7 +23,7 @@ const describe = (elements) => elements.map((element) => ({
   attributes: Object.fromEntries(element.getAttributeNames().map((name) => [name, element.getAttribute(name)])),
 }));
 
-function panelScript(optionText) {
+function panelScript() {
   return (needle) => {
     const anchor = [...document.querySelectorAll('button, [role="option"], [role="menuitem"], div')]
       .find((element) => element.textContent?.trim() === needle);

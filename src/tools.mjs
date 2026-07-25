@@ -10,6 +10,8 @@ import { omelette } from './rpc.mjs';
 import { awaitDesignReady, ensureSession, loginHelp, withOperationPage } from './session.mjs';
 import { runDesignSync } from './sync.mjs';
 import { runGenerateTurn } from './turn.mjs';
+import { generateVariants } from './variants.mjs';
+export { createPool, variantPrompt } from './variants.mjs';
 const LOGIN_TIMEOUT_MS = 180_000;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const schema = (properties, required = []) => ({ type: 'object', properties, required });
@@ -22,7 +24,7 @@ export const TOOLS = [
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
   { name: 'design_status', description: 'Summarize project data, chat count, and last message role.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
-  { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
+  { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output | interrupted | stalled.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project. Only call with confirm:true when the user explicitly asked to delete the project.', inputSchema: schema({ projectId: { type: 'string' }, confirm: { type: 'boolean' } }, ['projectId']) },
   { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots. designSystem grounds every variant in the same account design system.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' } }, ['prompt']) },
@@ -95,12 +97,16 @@ export async function design_create(args = {}, overrides = {}) {
   return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
     const { projectId, reused } = await deps.findOrCreateProject(scoped, name, args);
-    await deps.awaitDesignReady(page, projectId);
     const wait = args.wait !== false;
-    const selectedModel = await deps.applyModelToPage(page, modelRequest);
-    const selectedEffort = effort === null ? null : await deps.applyEffortToPage(page, effort);
+    let selectedModel = null;
+    let selectedEffort = null;
     const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
-    const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait, beforeSubmit: attach.hook });
+    const prepareComposer = async (target) => {
+      selectedModel = await deps.applyModelToPage(target, modelRequest);
+      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort);
+      await attach.hook?.(target);
+    };
+    const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait, beforeSubmit: prepareComposer });
     const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn, ...attach.attached() };
     if (reused) result.reused = true;
     return withResolvedGeneration(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel, selectedEffort);
@@ -115,12 +121,16 @@ export async function design_iterate(args = {}, overrides = {}) {
   const session = await deps.ensureSession({ visible: false });
   return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
-    await deps.awaitDesignReady(page, projectId);
     const wait = args.wait !== false;
-    const selectedModel = await deps.applyModelToPage(page, modelRequest);
-    const selectedEffort = effort === null ? null : await deps.applyEffortToPage(page, effort);
+    let selectedModel = null;
+    let selectedEffort = null;
     const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
-    const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait, beforeSubmit: attach.hook });
+    const prepareComposer = async (target) => {
+      selectedModel = await deps.applyModelToPage(target, modelRequest);
+      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort);
+      await attach.hook?.(target);
+    };
+    const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait, beforeSubmit: prepareComposer });
     const result = { projectId, ...turn, ...attach.attached() };
     return withResolvedGeneration(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel, selectedEffort);
   });
@@ -198,66 +208,12 @@ async function design_preview(args = {}) {
   });
 }
 
-const VARIANTS_MAX_COUNT = 4;
-const VARIANTS_MAX_CONCURRENCY = 3;
-
-const AXIS_HINTS = {
-  layout: 'Vary the LAYOUT: use a distinctly different page structure, grid, and content arrangement from the other variants.',
-  color: 'Vary the COLOR: use a distinctly different color palette and contrast strategy from the other variants.',
-  typography: 'Vary the TYPOGRAPHY: use distinctly different typefaces, type scale, and text rhythm from the other variants.',
-  mood: 'Vary the MOOD: use a distinctly different overall feel and visual tone from the other variants.',
-};
-
-export function variantPrompt(prompt, axis, index, count) {
-  const hint = AXIS_HINTS[axis] || (axis ? `Vary along this axis: ${axis}.` : 'Use a clearly different mood, layout, and palette from the other variants.');
-  return `${prompt}\n\nThis is variant ${index + 1} of ${count}. ${hint}`;
-}
-
-// Minimal semaphore: at most `limit` jobs run at once, the rest queue in FIFO order.
-export function createPool(limit) {
-  let active = 0;
-  const queue = [];
-  const release = () => {
-    active -= 1;
-    const run = queue.shift();
-    if (run) run();
-  };
-  return (job) => new Promise((resolve, reject) => {
-    const run = () => {
-      active += 1;
-      Promise.resolve().then(job).then(resolve, reject).finally(release);
-    };
-    if (active < limit) run();
-    else queue.push(run);
-  });
-}
-
 export async function design_variants(args = {}, deps = {}) {
-  const prompt = requireString(args.prompt, 'prompt');
-  const modelRequest = resolveOptionalModel(args.model);
-  const model = `${modelRequest.family}${modelRequest.version ? `-${modelRequest.version}` : ''}`;
-  const count = Math.max(1, Math.min(VARIANTS_MAX_COUNT, Number(args.count) || 3));
-  const axis = args.axis ? String(args.axis) : null;
-  const withPreview = args.preview !== false;
-  const create = deps.create || design_create;
-  const renderPreview = deps.preview || design_preview;
-  const acquire = createPool(deps.concurrency || VARIANTS_MAX_CONCURRENCY);
-  const baseName = derivedName(prompt, args.name);
-  const variants = await Promise.all(Array.from({ length: count }, (_, index) => acquire(async () => {
-    try {
-      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model, designSystem: args.designSystem });
-      if (!withPreview) return { index, ...created, image: null };
-      try {
-        const shot = await renderPreview({ projectId: created.projectId });
-        return { index, ...created, image: shot.image || null };
-      } catch (error) {
-        return { index, ...created, image: null, previewError: String(error?.message || error) };
-      }
-    } catch (error) {
-      return { index, error: String(error?.message || error) };
-    }
-  })));
-  return { prompt, axis, count, variants };
+  return generateVariants(args, {
+    create: deps.create || design_create,
+    preview: deps.preview || design_preview,
+    concurrency: deps.concurrency,
+  });
 }
 
 async function design_system_list(_args = {}, deps = {}) {

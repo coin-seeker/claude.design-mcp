@@ -31,7 +31,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
-| `design_check` | Poll and recover an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, `no_output`, `interrupted`, or `stalled` |
+| `design_check` | Poll and recover an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, `no_output`, `interrupted`, `stalled`, or `resume_exhausted` |
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 | `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
@@ -98,12 +98,14 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
   call creates a new project as before.
 - Poll submitted work with `design_check({ projectId })`, or
   `node src/server.mjs check <projectId>`. Its `status` is `generating`,
-  `awaiting_input`, `done`, `no_output`, `interrupted`, or `stalled`. Each check opens the
-  project page, answers a question form when possible, and automatically clicks the
+  `awaiting_input`, `done`, `no_output`, `interrupted`, `stalled`, or `resume_exhausted`. Each check reuses the
+  held owner page while a turn is active (without reloading it), answers a question form when possible, and automatically clicks the
   interrupted banner's `Resume` button. `interrupted` means the banner was present but
   could not be resumed; `stalled` means the file tree was stable with no generated files
-  and the last message was still the user's prompt. `_ds/**` design-system material is not
-  counted as generated output.
+  and the last message was still the user's prompt. `resume_exhausted` is terminal after
+  three consecutive Resume attempts and includes `resumeAttempts`, `maxResumeAttempts`,
+  and `problem: "resume_attempts_exhausted"`. `_ds/**` design-system material is not counted
+  as generated output.
 
 ## Asynchronous workflow
 
@@ -138,6 +140,7 @@ node src/server.mjs preview <projectId>
 - `CLAUDE_DESIGN_HEADLESS` — set `1` to drive headless Chrome instead of off-screen
 - `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~360s, iterate ~240s defaults)
 - `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `20000`)
+- `CLAUDE_DESIGN_PAGE_LEASE_MS` — independent hard cap for an async owner page if its completion monitor hangs (default `2700000`, 45 minutes)
 - `CLAUDE_DESIGN_CLAUDE_BIN` — Claude Code binary used by `design_system_sync` (default `claude`)
 - `CLAUDE_DESIGN_SYNC_TIMEOUT_MS` — hard cap for one `/design-sync` run (default `900000`, 15 minutes)
 

@@ -7,7 +7,7 @@ import { previewProject } from './preview.mjs';
 import { editProjectFile, getProjectFile, isTextProjectFile } from './project-file.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
-import { awaitDesignReady, ensureSession, loginHelp, withOperationPage } from './session.mjs';
+import { awaitDesignReady, ensureSession, loginHelp, withOperationPage, withProjectOperationPage } from './session.mjs';
 import { runDesignSync } from './sync.mjs';
 import { runGenerateTurn } from './turn.mjs';
 import { generateVariants } from './variants.mjs';
@@ -24,7 +24,7 @@ export const TOOLS = [
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
   { name: 'design_status', description: 'Summarize project data, chat count, and last message role.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
-  { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output | interrupted | stalled.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
+  { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output | interrupted | stalled | resume_exhausted.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project. Only call with confirm:true when the user explicitly asked to delete the project.', inputSchema: schema({ projectId: { type: 'string' }, confirm: { type: 'boolean' } }, ['projectId']) },
   { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots. designSystem grounds every variant in the same account design system.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' } }, ['prompt']) },
@@ -177,7 +177,7 @@ async function design_status(args = {}) {
 async function design_check(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const session = await ensureSession({ visible: false });
-  return withOperationPage(session, (page) => checkDesign({ ...session, page }, projectId));
+  return withProjectOperationPage(session, projectId, (page) => checkDesign({ ...session, page }, projectId));
 }
 
 async function design_edit(args = {}) {

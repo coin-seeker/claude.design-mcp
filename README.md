@@ -35,6 +35,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 | `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
+| `design_system_list` | List the design systems on your account (name + id), across every page of the project list |
 
 ## Setup
 
@@ -54,6 +55,7 @@ Register as a local MCP (opencode example):
 ```bash
 node src/server.mjs login
 node src/server.mjs list
+node src/server.mjs list-systems
 node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus
 node src/server.mjs iterate <projectId> "add a dark mode toggle to the header" --model sonnet
 node src/server.mjs check <projectId>
@@ -140,6 +142,13 @@ package folder as its working directory and reports what the sync uploaded.
   pipeline regenerates the folder, snapshot `.design-sync/` before replacing it and restore it
   afterwards — this tool never writes the package itself.
 - A first sync takes ~10 minutes; unchanged re-runs take ~2. The CLI exits `1` on a failed sync.
+
+`design_system_list` (CLI: `list-systems`) is the read side of the same feature. claude.ai has no
+separate design-systems endpoint — design systems are returned by the ordinary project list RPC
+tagged `PROJECT_TYPE_DESIGN_SYSTEM`, which pages 20 at a time, so the tool follows every page and
+returns `[{ name, id, publishedAt?, viewedAt? }]` (`publishedAt` appears only once a system has
+been published). Use it to confirm what `design_system_sync` actually landed on the account.
+`scripts/probe-design-systems.mjs` re-captures that live shape if the API changes.
 
 ## When is a generation "done"?
 

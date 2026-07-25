@@ -1,6 +1,7 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
 import { applyModelToPage, resolveOptionalModel, withResolvedModel } from './model.mjs';
 import { checkDesign } from './check.mjs';
+import { listDesignSystems } from './list-systems.mjs';
 import { previewProject } from './preview.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
@@ -24,6 +25,7 @@ export const TOOLS = [
   { name: 'design_delete', description: 'Delete one Claude Design project. Only call with confirm:true when the user explicitly asked to delete the project.', inputSchema: schema({ projectId: { type: 'string' }, confirm: { type: 'boolean' } }, ['projectId']) },
   { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
   { name: 'design_system_sync', description: 'Sync a materialized design-system package directory to claude.ai using Claude Code /design-sync. The package must contain package.json and styles.css.', inputSchema: schema({ dir: { type: 'string' } }, ['dir']) },
+  { name: 'design_system_list', description: 'List the claude.ai design systems visible to the logged-in account.', inputSchema: schema({}) },
 ];
 function requireString(value, name) {
   const text = String(value ?? '').trim();
@@ -249,4 +251,8 @@ async function design_system_sync(args = {}) {
   return runDesignSync({ dir: requireString(args.dir, 'dir'), timeoutMs: args.timeoutMs });
 }
 
-export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_check, design_edit, design_delete, design_variants, design_system_sync };
+async function design_system_list(_args = {}, deps = {}) {
+  return listDesignSystems(deps);
+}
+
+export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_check, design_edit, design_delete, design_variants, design_system_sync, design_system_list };

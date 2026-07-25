@@ -113,6 +113,7 @@ async function runCli(argv) {
   try {
     if (cmd === 'login') console.log(JSON.stringify(await IMPL.design_login({}), null, 2));
     else if (cmd === 'list') console.log(JSON.stringify(await IMPL.design_list({}), null, 2));
+    else if (cmd === 'list-systems') console.log(JSON.stringify(await IMPL.design_system_list({}), null, 2));
     else if (cmd === 'create') {
       const { positional, flags } = parseGenerateFlags(rest);
       console.log(JSON.stringify(await IMPL.design_create({ prompt: positional[0], name: positional[1], ...flags }), null, 2));
@@ -134,7 +135,7 @@ async function runCli(argv) {
       console.log(JSON.stringify(synced, null, 2));
       process.exit(synced.ok ? 0 : 1); // a refused sync must not look like success to the caller
     }
-    else console.log('usage: node src/server.mjs <login|list|create|iterate|pull|preview|get|status|check|edit|delete|sync> ...');
+    else console.log('usage: node src/server.mjs <login|list|list-systems|create|iterate|pull|preview|get|status|check|edit|delete|sync> ...');
   } catch (error) {
     console.error('error:', error.message);
     process.exit(1);

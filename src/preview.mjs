@@ -7,6 +7,7 @@ import { decodeToBuffer, expandHome, fileEntriesOf, sanitizeName } from './helpe
 import { listAllFiles } from './pull.mjs';
 import { omelette } from './rpc.mjs';
 import { chromeBin, getConnectedBrowser } from './session.mjs';
+import { closePage, logEvent } from './log.mjs';
 
 export const previewOut = () => process.env.CLAUDE_DESIGN_DIR || process.cwd();
 export const PREVIEW_TIMEOUT_MS = 90_000;
@@ -38,20 +39,35 @@ export async function renderHtmlToPng(html, outFile, options = {}) {
   const sessionBrowser = options.sessionBrowser !== undefined ? options.sessionBrowser : getConnectedBrowser();
   if (sessionBrowser) {
     const page = await sessionBrowser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+    let closeReason = 'preview-complete';
     try {
       return await renderOnPage(page, html, outFile);
+    } catch (error) {
+      closeReason = 'preview-error';
+      throw error;
     } finally {
-      await page.close().catch(() => {});
+      await closePage(page, closeReason);
     }
   }
   const chromium = options.chromium || playwrightChromium;
   const executablePath = options.executablePath || chromeBin();
   const browser = await chromium.launch({ executablePath, headless: true });
+  let page = null;
+  let closeReason = 'preview-complete';
   try {
-    const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+    page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
     return await renderOnPage(page, html, outFile);
+  } catch (error) {
+    closeReason = 'preview-error';
+    throw error;
   } finally {
-    await browser.close().catch(() => {});
+    if (page) await closePage(page, closeReason);
+    logEvent('browser.close', { reason: closeReason });
+    try {
+      await browser.close();
+    } catch (error) {
+      logEvent('browser.close_failed', { reason: closeReason, error: String(error?.message || error) });
+    }
   }
 }
 

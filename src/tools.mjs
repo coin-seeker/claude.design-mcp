@@ -5,6 +5,7 @@ import { previewProject } from './preview.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
 import { awaitDesignReady, ensureSession, loginHelp, withOperationPage } from './session.mjs';
+import { runDesignSync } from './sync.mjs';
 import { runGenerateTurn } from './turn.mjs';
 const LOGIN_TIMEOUT_MS = 180_000;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,6 +23,7 @@ export const TOOLS = [
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project. Only call with confirm:true when the user explicitly asked to delete the project.', inputSchema: schema({ projectId: { type: 'string' }, confirm: { type: 'boolean' } }, ['projectId']) },
   { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
+  { name: 'design_system_sync', description: 'Sync a materialized design-system package directory to claude.ai using Claude Code /design-sync. The package must contain package.json and styles.css.', inputSchema: schema({ dir: { type: 'string' } }, ['dir']) },
 ];
 function requireString(value, name) {
   const text = String(value ?? '').trim();
@@ -242,4 +244,9 @@ export async function design_variants(args = {}, deps = {}) {
   return { prompt, axis, count, variants };
 }
 
-export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_check, design_edit, design_delete, design_variants };
+// The package directory is produced elsewhere (dashboard materializer); this only runs the sync command in it.
+async function design_system_sync(args = {}) {
+  return runDesignSync({ dir: requireString(args.dir, 'dir'), timeoutMs: args.timeoutMs });
+}
+
+export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_check, design_edit, design_delete, design_variants, design_system_sync };

@@ -3,6 +3,10 @@ const GENERATE_FLAGS = {
   '--model': { key: 'model' },
 };
 
+const SYNC_FLAGS = {
+  '--timeout-ms': { key: 'timeoutMs' },
+};
+
 export function parseFlags(args, definitions) {
   const positional = [];
   const flags = {};
@@ -27,4 +31,8 @@ export function parseFlags(args, definitions) {
 
 export function parseGenerateFlags(args) {
   return parseFlags(args, GENERATE_FLAGS);
+}
+
+export function parseSyncFlags(args) {
+  return parseFlags(args, SYNC_FLAGS);
 }

@@ -34,6 +34,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 | `design_check` | Poll an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, or `no_output` |
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
+| `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
 
 ## Setup
 
@@ -59,6 +60,7 @@ node src/server.mjs check <projectId>
 node src/server.mjs pull <projectId|name>
 node src/server.mjs preview <projectId|name> [outDir] [width]
 node src/server.mjs delete <projectId>
+node src/server.mjs sync <packageDir> [--timeout-ms 900000]
 ```
 
 After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visible window**
@@ -118,6 +120,26 @@ node src/server.mjs preview <projectId>
 - `CLAUDE_DESIGN_HEADLESS` — set `1` to drive headless Chrome instead of off-screen
 - `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~360s, iterate ~240s defaults)
 - `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `20000`)
+- `CLAUDE_DESIGN_CLAUDE_BIN` — Claude Code binary used by `design_system_sync` (default `claude`)
+- `CLAUDE_DESIGN_SYNC_TIMEOUT_MS` — hard cap for one `/design-sync` run (default `900000`, 15 minutes)
+
+## Design-system sync
+
+`design_system_sync` (CLI: `sync <dir>`) is the one tool that does **not** drive the browser: it
+runs `claude -p "/design-sync" --dangerously-skip-permissions --output-format json` with the
+package folder as its working directory and reports what the sync uploaded.
+
+- The folder must already be a package (`package.json` + a CSS entry such as `styles.css`, plus
+  `tokens/*.json`, `guidelines/*.md`, `README.md`). Components are optional — a tokens-only
+  package is accepted. The tool refuses before spawning if `package.json` is missing.
+- **Exit status is not the success signal.** A refused sync still exits `0` with
+  `subtype: "success"`, so the result is only `ok: true` when the reply carries a real project
+  link; otherwise you get `{ ok: false, error, raw }` with the full output for diagnosis.
+- A first run creates the project and writes `.design-sync/config.json`, which **pins** later runs
+  to the same project (an unchanged re-run is then a no-op instead of a duplicate). If your
+  pipeline regenerates the folder, snapshot `.design-sync/` before replacing it and restore it
+  afterwards — this tool never writes the package itself.
+- A first sync takes ~10 minutes; unchanged re-runs take ~2. The CLI exits `1` on a failed sync.
 
 ## When is a generation "done"?
 

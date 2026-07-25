@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseGenerateFlags, parseSyncFlags } from './cli.mjs';
+import { runDesignSync } from './sync.mjs';
 import { IMPL, TOOLS } from './tools.mjs';
 
 function send(message) {
@@ -131,8 +132,19 @@ async function runCli(argv) {
     else if (cmd === 'sync') {
       const { positional, flags } = parseSyncFlags(rest);
       if (!positional[0]) throw new Error('usage: node src/server.mjs sync <dir> [--timeout-ms <ms>]');
-      const synced = await IMPL.design_system_sync({ dir: positional[0], timeoutMs: flags.timeoutMs });
-      console.log(JSON.stringify(synced, null, 2));
+      const synced = await runDesignSync({
+        dir: positional[0],
+        timeoutMs: flags.timeoutMs,
+        onProgress: (line) => send({ type: 'progress', stream: 'claude', text: line.slice(0, 2000) }),
+      });
+      send({
+        type: 'result',
+        ok: synced.ok,
+        systemName: synced.systemName ?? null,
+        error: synced.error ?? null,
+        projectId: synced.projectId ?? null,
+        url: synced.url ?? null,
+      });
       process.exit(synced.ok ? 0 : 1); // a refused sync must not look like success to the caller
     }
     else console.log('usage: node src/server.mjs <login|list|list-systems|create|iterate|pull|preview|get|status|check|edit|delete|sync> ...');

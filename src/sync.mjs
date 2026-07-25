@@ -14,7 +14,7 @@ import path from 'node:path';
 import { expandHome } from './helpers.mjs';
 
 export const DEFAULT_SYNC_TIMEOUT_MS = 15 * 60 * 1000;
-export const SYNC_ARGS = ['-p', '/design-sync', '--dangerously-skip-permissions', '--output-format', 'json'];
+export const SYNC_ARGS = ['-p', '/design-sync', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
 
 const PROJECT_URL_RE = /https?:\/\/claude\.ai\/design\/p\/([0-9a-zA-Z-]{20,})/;
 // `/design-sync` writes the system name in prose, either right after the project link
@@ -51,6 +51,15 @@ export function parseClaudeJson(stdout) {
   return null;
 }
 
+function parseClaudeResult(stdout) {
+  const lines = String(stdout ?? '').split('\n');
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const parsed = parseJsonOrNull(lines[index].trim());
+    if (parsed?.type === 'result') return parsed;
+  }
+  return null;
+}
+
 function systemNameFrom(text, afterUrl) {
   const linked = NAME_AFTER_URL_RE.exec(afterUrl);
   if (linked) return linked[1].trim();
@@ -74,7 +83,7 @@ export function extractProject(payload) {
 export function evaluateSyncOutput({ code, stdout, stderr }) {
   const raw = { code, stdout: tailOf(stdout), stderr: tailOf(stderr) };
   if (code !== 0) return { ok: false, error: `claude exited with non-zero status ${code}`, raw };
-  const payload = parseClaudeJson(stdout);
+  const payload = parseClaudeResult(stdout) || parseClaudeJson(stdout);
   if (!payload) return { ok: false, error: 'claude produced no parsable JSON result', raw };
   if (payload.is_error === true) return { ok: false, error: `claude reported an error result (subtype ${payload.subtype ?? 'unknown'})`, raw };
   const project = extractProject(payload);
@@ -87,17 +96,29 @@ export function resolveTimeoutMs(explicit, env = process.env) {
   return Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_SYNC_TIMEOUT_MS;
 }
 
-function defaultSpawn({ bin, args, cwd, signal }) {
+export function defaultSpawn({ bin, args, cwd, signal, onProgress, spawnImpl = spawn }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { cwd, signal, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnImpl(bin, args, { cwd, signal, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let lineBuffer = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      lineBuffer += chunk;
+      let newline;
+      while ((newline = lineBuffer.indexOf('\n')) >= 0) {
+        onProgress?.(lineBuffer.slice(0, newline));
+        lineBuffer = lineBuffer.slice(newline + 1);
+      }
+    });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
+    child.on('close', (code) => {
+      if (lineBuffer) onProgress?.(lineBuffer);
+      resolve({ code, stdout, stderr });
+    });
   });
 }
 
@@ -118,7 +139,7 @@ async function withTimeout(run, timeoutMs) {
   }
 }
 
-export async function runDesignSync({ dir, timeoutMs, spawnImpl = defaultSpawn, env = process.env } = {}) {
+export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = defaultSpawn, env = process.env } = {}) {
   const requested = String(dir ?? '').trim();
   if (!requested) throw new Error('dir is required');
   const target = path.resolve(expandHome(requested));
@@ -128,7 +149,7 @@ export async function runDesignSync({ dir, timeoutMs, spawnImpl = defaultSpawn, 
   const bin = String(env.CLAUDE_DESIGN_CLAUDE_BIN || 'claude');
   const limitMs = resolveTimeoutMs(timeoutMs, env);
   const outcome = await withTimeout(
-    (signal) => spawnImpl({ bin, args: SYNC_ARGS, cwd: target, timeoutMs: limitMs, signal }),
+    (signal) => spawnImpl({ bin, args: SYNC_ARGS, cwd: target, timeoutMs: limitMs, signal, onProgress }),
     limitMs,
   );
   return { dir: target, ...evaluateSyncOutput(outcome) };

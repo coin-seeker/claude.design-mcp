@@ -1,6 +1,7 @@
 const GENERATE_FLAGS = {
   '--no-wait': { key: 'wait', value: false },
   '--model': { key: 'model' },
+  '--design-system': { key: 'designSystem' },
 };
 
 const SYNC_FLAGS = {

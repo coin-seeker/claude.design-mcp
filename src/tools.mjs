@@ -1,5 +1,6 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
 import { applyModelToPage, resolveOptionalModel, withResolvedModel } from './model.mjs';
+import { applyDesignSystem, designSystemHook } from './design-system.mjs';
 import { checkDesign } from './check.mjs';
 import { listDesignSystems } from './list-systems.mjs';
 import { previewProject } from './preview.mjs';
@@ -14,8 +15,8 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
-  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
-  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' } }, ['projectId', 'prompt']) },
+  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. designSystem grounds the design in one of the account design systems from design_system_list.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
+  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
@@ -23,7 +24,7 @@ export const TOOLS = [
   { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project. Only call with confirm:true when the user explicitly asked to delete the project.', inputSchema: schema({ projectId: { type: 'string' }, confirm: { type: 'boolean' } }, ['projectId']) },
-  { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' } }, ['prompt']) },
+  { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots. designSystem grounds every variant in the same account design system.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' } }, ['prompt']) },
   { name: 'design_system_sync', description: 'Sync a materialized design-system package directory to claude.ai using Claude Code /design-sync. The package must contain package.json and styles.css.', inputSchema: schema({ dir: { type: 'string' } }, ['dir']) },
   { name: 'design_system_list', description: 'List the claude.ai design systems visible to the logged-in account.', inputSchema: schema({}) },
 ];
@@ -75,36 +76,43 @@ export async function findOrCreateProject(scoped, name, args = {}, deps = {}) {
   return { projectId: requireString(created?.projectId, 'projectId'), reused: false };
 }
 
-async function design_create(args = {}) {
+// One injection point for the two composer flows, so a test can drive them without a browser.
+const FLOW_DEPS = { ensureSession, withOperationPage, findOrCreateProject, awaitDesignReady, applyModelToPage, applyDesignSystem, runGenerateTurn, listAllFiles };
+
+export async function design_create(args = {}, overrides = {}) {
+  const deps = { ...FLOW_DEPS, ...overrides };
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
-  const session = await ensureSession({ visible: false });
+  const session = await deps.ensureSession({ visible: false });
   const name = derivedName(prompt, args.name);
-  return withOperationPage(session, async (page) => {
+  return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
-    const { projectId, reused } = await findOrCreateProject(scoped, name, args);
-    await awaitDesignReady(page, projectId);
+    const { projectId, reused } = await deps.findOrCreateProject(scoped, name, args);
+    await deps.awaitDesignReady(page, projectId);
     const wait = args.wait !== false;
-    const selectedModel = modelRequest ? await applyModelToPage(page, modelRequest) : null;
-    const turn = await runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait });
-    const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn };
+    const selectedModel = modelRequest ? await deps.applyModelToPage(page, modelRequest) : null;
+    const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
+    const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait, beforeSubmit: attach.hook });
+    const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn, ...attach.attached() };
     if (reused) result.reused = true;
-    return withResolvedModel(wait ? { ...result, files: await listAllFiles(scoped, projectId) } : result, selectedModel);
+    return withResolvedModel(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel);
   });
 }
-async function design_iterate(args = {}) {
+export async function design_iterate(args = {}, overrides = {}) {
+  const deps = { ...FLOW_DEPS, ...overrides };
   const projectId = requireString(args.projectId, 'projectId');
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
-  const session = await ensureSession({ visible: false });
-  return withOperationPage(session, async (page) => {
+  const session = await deps.ensureSession({ visible: false });
+  return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
-    await awaitDesignReady(page, projectId);
+    await deps.awaitDesignReady(page, projectId);
     const wait = args.wait !== false;
-    const selectedModel = modelRequest ? await applyModelToPage(page, modelRequest) : null;
-    const turn = await runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait });
-    const result = { projectId, ...turn };
-    return withResolvedModel(wait ? { ...result, files: await listAllFiles(scoped, projectId) } : result, selectedModel);
+    const selectedModel = modelRequest ? await deps.applyModelToPage(page, modelRequest) : null;
+    const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
+    const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait, beforeSubmit: attach.hook });
+    const result = { projectId, ...turn, ...attach.attached() };
+    return withResolvedModel(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel);
   });
 }
 async function design_pull(args = {}) {
@@ -231,7 +239,7 @@ export async function design_variants(args = {}, deps = {}) {
   const baseName = derivedName(prompt, args.name);
   const variants = await Promise.all(Array.from({ length: count }, (_, index) => acquire(async () => {
     try {
-      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model });
+      const created = await create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model, designSystem: args.designSystem });
       if (!withPreview) return { index, ...created, image: null };
       try {
         const shot = await renderPreview({ projectId: created.projectId });

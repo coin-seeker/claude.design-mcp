@@ -79,10 +79,14 @@ async function runUnlocked(session, projectId, prompt, options) {
   const ready = options.awaitReady || awaitDesignReady;
   const listFiles = options.listFiles || defaultListFiles;
   const answerQuestions = options.answerQuestions || tryAnswerQuestions;
+  // Composer preparation (e.g. the design-system picker) has to run AFTER ready() navigates and
+  // BEFORE the prompt goes in: the navigation would otherwise discard the composer selection.
+  const prepareComposer = options.beforeSubmit || (async () => {});
 
   if (options.wait === false) {
     await withProjectLock(projectId, async () => {
       await ready(session.page, projectId);
+      await prepareComposer(session.page);
       await submitPrompt(session.page, String(prompt));
     });
     const deadline = Date.now() + Number(options.submitWatchMs ?? SUBMIT_WATCH_MS);
@@ -108,6 +112,7 @@ async function runUnlocked(session, projectId, prompt, options) {
     // (not the pre-existing files); for create the baseline is empty.
     const baseline = stabilitySignature(await listFiles(session, projectId).catch(() => []));
     session.page.on('response', handler);
+    await prepareComposer(session.page);
     await submitPrompt(session.page, String(prompt));
 
     const history = [];

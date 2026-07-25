@@ -24,9 +24,9 @@ claude.ai/design generates **on your own account** (not a local imitation).
 |------|------|
 | `design_login` | One-time: open Chrome to log into claude.ai/design (session persists) |
 | `design_list` | List your claude.ai/design projects |
-| `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?`, `wait?`, `model?`, `fresh?` |
-| `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, `count?`, `axis?`, `name?`, `preview?`, `model?` |
-| `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?` |
+| `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?`, `wait?`, `model?`, `designSystem?`, `fresh?` |
+| `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, `count?`, `axis?`, `name?`, `preview?`, `model?`, `designSystem?` |
+| `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?`, `designSystem?` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
@@ -57,6 +57,7 @@ node src/server.mjs login
 node src/server.mjs list
 node src/server.mjs list-systems
 node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus
+node src/server.mjs create "simple pricing card" pricing --design-system "Frontend Design System"
 node src/server.mjs iterate <projectId> "add a dark mode toggle to the header" --model sonnet
 node src/server.mjs check <projectId>
 node src/server.mjs pull <projectId|name>
@@ -77,6 +78,15 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
   `anthropic/claude-opus-5`. New family versions become available automatically when
   they appear in the site menu. If a requested version is unavailable, the error lists
   the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
+- `design_create`, `design_iterate`, and `design_variants` accept an optional `designSystem`
+  (CLI `--design-system`), the name of one of the account design systems reported by
+  `design_system_list`. It is matched case-insensitively, an unambiguous partial name works,
+  and an unknown name errors with the list the composer offers. The chosen system replaces the
+  org default rather than adding to it, and the result echoes the resolved name. claude.ai only
+  offers the picker **while a project has produced no design yet**, so `designSystem` belongs on
+  `design_create`; on `design_iterate` it works only for such a project and otherwise errors
+  instead of silently ignoring the request. `design_variants` grounds every variant in the same
+  system.
 - `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
   to return immediately after submission with `{ submitted: true, pending: true }`;
   the CLI equivalent is `--no-wait`.

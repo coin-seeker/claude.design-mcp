@@ -30,6 +30,16 @@ export function generatedFileEntries(entries) {
   return (Array.isArray(entries) ? entries : []).filter((entry) => !/^_ds(?:\/|$)/.test(String(entry?.path || '')));
 }
 
+export function lastMessageRoleOf(raw) {
+  const data = raw?.data
+    ? JSON.parse(Buffer.from(String(raw.data), 'base64').toString('utf8'))
+    : raw;
+  const chats = Object.values(data?.chats || {});
+  const messages = chats.flatMap((chat) => Array.isArray(chat.messages) ? chat.messages : []);
+  const role = messages.at(-1)?.role;
+  return role === 'assistant' || role === 'user' ? role : null;
+}
+
 export function expandHome(value) {
   const text = String(value);
   return text === '~' || text.startsWith('~/') ? path.join(homedir(), text.slice(2)) : text;

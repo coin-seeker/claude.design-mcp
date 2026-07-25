@@ -31,7 +31,7 @@ claude.ai/design generates **on your own account** (not a local imitation).
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
-| `design_check` | Poll an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, or `no_output` |
+| `design_check` | Poll and recover an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, `no_output`, `interrupted`, or `stalled` |
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 | `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
@@ -88,8 +88,9 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
   instead of silently ignoring the request. `design_variants` grounds every variant in the same
   system.
 - `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
-  to return immediately after submission with `{ submitted: true, pending: true }`;
-  the CLI equivalent is `--no-wait`.
+  to return after a verified `Chat` POST and the bounded question-form watch with
+  `{ submitted: true, pending: true }`; the CLI equivalent is `--no-wait`. A click or
+  Enter press that does not produce a `Chat` request fails instead of reporting success.
 - `design_create` with an explicit `name` is **find-or-create**: an existing project with
   that exact name is reused (newest wins on collisions) and the result carries
   `reused: true`, so repeated calls iterate one project instead of piling up duplicates.
@@ -97,7 +98,12 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
   call creates a new project as before.
 - Poll submitted work with `design_check({ projectId })`, or
   `node src/server.mjs check <projectId>`. Its `status` is `generating`,
-  `awaiting_input`, `done`, or `no_output`.
+  `awaiting_input`, `done`, `no_output`, `interrupted`, or `stalled`. Each check opens the
+  project page, answers a question form when possible, and automatically clicks the
+  interrupted banner's `Resume` button. `interrupted` means the banner was present but
+  could not be resumed; `stalled` means the file tree was stable with no generated files
+  and the last message was still the user's prompt. `_ds/**` design-system material is not
+  counted as generated output.
 
 ## Asynchronous workflow
 

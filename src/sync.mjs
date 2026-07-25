@@ -46,7 +46,7 @@ export function parseClaudeJson(stdout) {
     const line = lines[index].trim();
     if (!line.startsWith('{') || !line.endsWith('}')) continue;
     const parsed = parseJsonOrNull(line);
-    if (parsed && typeof parsed === 'object') return parsed;
+    if (parsed) return parsed;
   }
   return null;
 }

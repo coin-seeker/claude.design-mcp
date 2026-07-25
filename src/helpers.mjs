@@ -26,6 +26,10 @@ export function fileEntriesOf(page) {
   return (page && (page.entries || page.files)) || [];
 }
 
+export function generatedFileEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).filter((entry) => !/^_ds(?:\/|$)/.test(String(entry?.path || '')));
+}
+
 export function expandHome(value) {
   const text = String(value);
   return text === '~' || text.startsWith('~/') ? path.join(homedir(), text.slice(2)) : text;

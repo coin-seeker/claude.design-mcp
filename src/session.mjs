@@ -5,6 +5,7 @@ import { chromium as playwrightChromium } from 'playwright-core';
 
 import { expandHome } from './helpers.mjs';
 import { cookieOrgExpression, omelette } from './rpc.mjs';
+import { closePage, logEvent } from './log.mjs';
 
 const DEFAULT_PROFILE = '~/.cache/claude-design-mcp/chrome-profile';
 const DEFAULT_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -138,6 +139,7 @@ async function pageFromBrowser(browser) {
 }
 
 let cachedSession = null;
+const heldOperationPages = new WeakMap();
 
 // Expose the already-connected CDP browser (if any) so other modules (e.g. preview)
 // can open a throwaway page on it instead of launching a separate headless Chrome.
@@ -145,6 +147,22 @@ export function getConnectedBrowser() {
   const browser = cachedSession?.browser;
   if (!browser) return null;
   return browser.isConnected?.() === false ? null : browser;
+}
+
+export function holdOperationPage(page, completion, reason) {
+  const state = { closed: false, reason };
+  heldOperationPages.set(page, state);
+  logEvent('page.hold', { reason, url: typeof page.url === 'function' ? page.url() : '' });
+  Promise.resolve(completion)
+    .then(
+      () => logEvent('page.hold_complete', { reason }),
+      (error) => logEvent('page.hold_failed', { reason, error: String(error?.message || error) }),
+    )
+    .finally(async () => {
+      if (state.closed) return;
+      state.closed = true;
+      await closePage(page, reason);
+    });
 }
 
 function sessionAlive(session) {
@@ -181,10 +199,16 @@ export async function withOperationPage(session, fn) {
   const context = session.browser.contexts()[0] || (await session.browser.newContext());
   const page = await context.newPage();
   await page.goto(DESIGN_URL, { waitUntil: 'domcontentloaded' });
+  let closeReason = 'operation-complete';
   try {
     return await fn(page);
+  } catch (error) {
+    closeReason = 'operation-error';
+    throw error;
   } finally {
-    await page.close().catch(() => {});
+    const held = heldOperationPages.get(page);
+    if (held) logEvent('page.close_deferred', { reason: held.reason, url: typeof page.url === 'function' ? page.url() : '' });
+    else await closePage(page, closeReason);
   }
 }
 

@@ -1,11 +1,15 @@
-import { fileEntriesOf } from './helpers.mjs';
+import { fileEntriesOf, generatedFileEntries } from './helpers.mjs';
 import { omelette } from './rpc.mjs';
-import { awaitDesignReady } from './session.mjs';
+import { awaitDesignReady, holdOperationPage } from './session.mjs';
 import { classifyTurnRequest, signatureStable, stabilitySignature } from './turn-classify.mjs';
 import { isPageError } from './errors.mjs';
+import { logEvent } from './log.mjs';
+import { observeTurnAction } from './turn-network.mjs';
+import { monitorPendingTurn } from './pending-monitor.mjs';
 
 const locks = new Map();
-const SUBMIT_WATCH_MS = 45_000;
+const SUBMIT_TIMEOUT_MS = 30_000;
+const TURN_START_TIMEOUT_MS = 15_000;
 const defaultTurnTimeout = () => Number(process.env.CLAUDE_DESIGN_TURN_TIMEOUT_MS || 300_000);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -20,7 +24,7 @@ async function sleepWithPage(page, ms) {
 
 async function defaultListFiles(session, projectId) {
   const res = await omelette(session.page, 'ListFiles', { projectId, depth: 100, offset: 0 }, session.org);
-  return fileEntriesOf(res);
+  return generatedFileEntries(fileEntriesOf(res));
 }
 
 function withProjectLock(projectId, run) {
@@ -32,18 +36,36 @@ function withProjectLock(projectId, run) {
   return stored;
 }
 
-async function submitPrompt(page, prompt) {
-  const editor = page.locator('div.ProseMirror[contenteditable="true"]').first();
-  await editor.click();
-  await page.keyboard.insertText(prompt);
-  await sleepWithPage(page, 300);
-  try { await page.locator('[data-testid="chat-send-button"]').first().click({ timeout: 3_000 }); }
-  catch (error) { void error; await page.keyboard.press('Enter'); }
+async function submitPrompt(page, prompt, timeoutMs) {
+  await observeTurnAction(page, async () => {
+    const targetUrl = typeof page.url === 'function' ? page.url() : '';
+    logEvent('turn.submit_target', { url: targetUrl });
+    const editor = page.locator('div.ProseMirror[contenteditable="true"]').first();
+    await editor.click();
+    await page.keyboard.insertText(prompt);
+    await sleepWithPage(page, 300);
+    const sendButton = page.locator('[data-testid="chat-send-button"]').first();
+    const enabled = await sendButton.isEnabled();
+    logEvent('turn.send_button_state', { enabled, url: targetUrl });
+    try {
+      await sendButton.click({ timeout: 3_000 });
+    } catch (error) {
+      logEvent('turn.send_button_fallback', { error: String(error?.message || error), url: targetUrl });
+      await page.keyboard.press('Enter');
+    }
+  }, {
+    kinds: ['chat'],
+    postOnly: true,
+    requireResponse: true,
+    timeoutMs,
+    requestTimeoutMessage: `Chat POST was not observed within ${timeoutMs}ms`,
+    responseTimeoutMessage: `Chat response was not observed within ${timeoutMs}ms`,
+  });
 }
 
 // ONE attempt to clear a clarifying-questions form (AI-generated AFTER the prompt:
 // option groups each with "Decide for me", then a "Continue" that starts generation).
-export async function tryAnswerQuestions(page) {
+export async function tryAnswerQuestions(page, options = {}) {
   const cont = page.locator('button:has-text("Continue")').first();
   let visible = false;
   try { visible = (await cont.count()) > 0 && await cont.isVisible(); }
@@ -63,9 +85,22 @@ export async function tryAnswerQuestions(page) {
       // group may re-render
     }
   }
-  try { await page.locator('button:has-text("Continue")').first().click({ timeout: 3_000 }); return true; }
+  try {
+    await observeTurnAction(page, async () => {
+      logEvent('turn.continue_click', { url: typeof page.url === 'function' ? page.url() : '' });
+      await page.locator('button:has-text("Continue")').first().click({ timeout: 3_000 });
+    }, {
+      kinds: ['chat', 'renew'],
+      postOnly: false,
+      requireResponse: false,
+      timeoutMs: Number(options.turnStartTimeoutMs ?? TURN_START_TIMEOUT_MS),
+      requestTimeoutMessage: 'Continue follow-up Chat or RenewTurn was not observed',
+    });
+    return true;
+  }
   catch (error) {
     if (isPageError(error)) throw error;
+    logEvent('turn.continue_not_started', { error: String(error?.message || error) });
     return false;
   }
 }
@@ -79,21 +114,30 @@ async function runUnlocked(session, projectId, prompt, options) {
   const ready = options.awaitReady || awaitDesignReady;
   const listFiles = options.listFiles || defaultListFiles;
   const answerQuestions = options.answerQuestions || tryAnswerQuestions;
+  const monitorPending = options.monitorPending || monitorPendingTurn;
+  const holdPage = options.holdPage || holdOperationPage;
+  const submitTimeoutMs = Number(options.submitTimeoutMs ?? SUBMIT_TIMEOUT_MS);
   // Composer preparation (e.g. the design-system picker) has to run AFTER ready() navigates and
   // BEFORE the prompt goes in: the navigation would otherwise discard the composer selection.
   const prepareComposer = options.beforeSubmit || (async () => {});
 
   if (options.wait === false) {
+    let baselineSignature;
     await withProjectLock(projectId, async () => {
       await ready(session.page, projectId);
+      baselineSignature = stabilitySignature(await listFiles(session, projectId));
       await prepareComposer(session.page);
-      await submitPrompt(session.page, String(prompt));
+      await submitPrompt(session.page, String(prompt), submitTimeoutMs);
     });
-    const deadline = Date.now() + Number(options.submitWatchMs ?? SUBMIT_WATCH_MS);
-    while (Date.now() < deadline) {
-      if (await answerQuestions(session.page)) break;
-      await sleepWithPage(session.page, Math.min(pollMs, deadline - Date.now()));
-    }
+    const completion = monitorPending(session, projectId, {
+      answerQuestions,
+      baselineSignature,
+      listFiles,
+      pollIntervalMs: pollMs,
+      quietMs,
+      stableCycles,
+    });
+    holdPage(session.page, completion, 'async-turn-finished');
     return { submitted: true, pending: true };
   }
 
@@ -113,7 +157,7 @@ async function runUnlocked(session, projectId, prompt, options) {
     const baseline = stabilitySignature(await listFiles(session, projectId).catch(() => []));
     session.page.on('response', handler);
     await prepareComposer(session.page);
-    await submitPrompt(session.page, String(prompt));
+    await submitPrompt(session.page, String(prompt), submitTimeoutMs);
 
     const history = [];
     const deadline = Date.now() + timeoutMs;

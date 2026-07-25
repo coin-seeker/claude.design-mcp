@@ -13,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { expandHome } from './helpers.mjs';
+import { listDesignSystems } from './list-systems.mjs';
 import { writeProjectTextFile } from './project-file.mjs';
 
 export const DEFAULT_SYNC_TIMEOUT_MS = 15 * 60 * 1000;
@@ -67,11 +68,29 @@ function parseClaudeResult(stdout) {
 function systemNameFrom(text, afterUrl) {
   const linked = NAME_AFTER_URL_RE.exec(afterUrl);
   if (linked) return linked[1].trim();
-  for (const [, quoted] of text.matchAll(QUOTED_RE)) {
+  for (const match of text.matchAll(QUOTED_RE)) {
+    const before = text.slice(0, match.index);
+    const insideCodeSpan = (before.match(/`+/gu)?.length ?? 0) % 2 === 1;
+    if (insideCodeSpan || /@import\s*$/u.test(before)) continue;
+    const quoted = match[1];
     const candidate = quoted.trim();
     if (candidate && !NAME_NOISE_RE.test(candidate) && /\p{L}/u.test(candidate)) return candidate;
   }
   return null;
+}
+
+async function lookupDesignSystemName(projectId) {
+  const systems = await listDesignSystems();
+  return systems.find((system) => system.id === projectId)?.name ?? null;
+}
+
+async function resolveSystemName(projectId, fallback, lookupSystemName) {
+  try {
+    const resolved = String(await lookupSystemName(projectId) ?? '').trim();
+    return resolved || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export function extractProject(payload) {
@@ -207,7 +226,7 @@ async function withTimeout(run, timeoutMs) {
   }
 }
 
-export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = defaultSpawn, writeProjectFile = writeProjectTextFile, env = process.env } = {}) {
+export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = defaultSpawn, writeProjectFile = writeProjectTextFile, lookupSystemName = lookupDesignSystemName, env = process.env } = {}) {
   const requested = String(dir ?? '').trim();
   if (!requested) throw new Error('dir is required');
   const target = path.resolve(expandHome(requested));
@@ -222,6 +241,7 @@ export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = de
   );
   const synced = { dir: target, ...evaluateSyncOutput(outcome) };
   if (!synced.ok) return { ...synced, flattened: false };
+  synced.systemName = await resolveSystemName(synced.projectId, synced.systemName, lookupSystemName);
   const flattened = await flattenSyncedStyles({ dir: target, projectId: synced.projectId, onProgress, writeProjectFile });
   return { ...synced, ...flattened };
 }

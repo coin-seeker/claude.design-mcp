@@ -5,7 +5,8 @@ import { chromium as playwrightChromium } from 'playwright-core';
 
 import { expandHome } from './helpers.mjs';
 import { cookieOrgExpression, omelette } from './rpc.mjs';
-import { closePage, logEvent } from './log.mjs';
+
+export { holdOperationPage, isHeldOperationPage, withOperationPage, withProjectOperationPage } from './operation-pages.mjs';
 
 const DEFAULT_PROFILE = '~/.cache/claude-design-mcp/chrome-profile';
 const DEFAULT_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -17,7 +18,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const profileDir = () => expandHome(process.env.CLAUDE_DESIGN_PROFILE || DEFAULT_PROFILE);
 export const chromeBin = () => process.env.CLAUDE_DESIGN_CHROME || DEFAULT_CHROME;
 export const cdpPort = () => Number(process.env.CLAUDE_DESIGN_CDP_PORT || 9377);
-export const launchTimeout = () => Number(process.env.CLAUDE_DESIGN_LAUNCH_TIMEOUT_MS || 15_000);
+export const launchTimeout = () => Number(process.env['CLAUDE_DESIGN_LAUNCH_TIMEOUT_MS'] || 15_000);
 export const readyTimeout = () => Number(process.env.CLAUDE_DESIGN_READY_TIMEOUT_MS || 45_000);
 
 export class NotLoggedInError extends Error {
@@ -139,7 +140,6 @@ async function pageFromBrowser(browser) {
 }
 
 let cachedSession = null;
-const heldOperationPages = new WeakMap();
 
 // Expose the already-connected CDP browser (if any) so other modules (e.g. preview)
 // can open a throwaway page on it instead of launching a separate headless Chrome.
@@ -147,22 +147,6 @@ export function getConnectedBrowser() {
   const browser = cachedSession?.browser;
   if (!browser) return null;
   return browser.isConnected?.() === false ? null : browser;
-}
-
-export function holdOperationPage(page, completion, reason) {
-  const state = { closed: false, reason };
-  heldOperationPages.set(page, state);
-  logEvent('page.hold', { reason, url: typeof page.url === 'function' ? page.url() : '' });
-  Promise.resolve(completion)
-    .then(
-      () => logEvent('page.hold_complete', { reason }),
-      (error) => logEvent('page.hold_failed', { reason, error: String(error?.message || error) }),
-    )
-    .finally(async () => {
-      if (state.closed) return;
-      state.closed = true;
-      await closePage(page, reason);
-    });
 }
 
 function sessionAlive(session) {
@@ -193,27 +177,14 @@ export async function ensureSession({ visible = false, force = false, fetchImpl 
   }
 }
 
-// Every tool call runs on its own throwaway page: parallel tools used to share the one
-// cached session.page, so a second call's navigation ripped the first call's tab away.
-export async function withOperationPage(session, fn) {
-  const context = session.browser.contexts()[0] || (await session.browser.newContext());
-  const page = await context.newPage();
-  await page.goto(DESIGN_URL, { waitUntil: 'domcontentloaded' });
-  let closeReason = 'operation-complete';
-  try {
-    return await fn(page);
-  } catch (error) {
-    closeReason = 'operation-error';
-    throw error;
-  } finally {
-    const held = heldOperationPages.get(page);
-    if (held) logEvent('page.close_deferred', { reason: held.reason, url: typeof page.url === 'function' ? page.url() : '' });
-    else await closePage(page, closeReason);
-  }
-}
-
 export async function awaitDesignReady(page, projectId) {
-  await page.goto(`${DESIGN_URL}/p/${projectId}`, { waitUntil: 'domcontentloaded' });
+  let matchesProject = false;
+  try {
+    matchesProject = new URL(page.url()).pathname === `/design/p/${projectId}`;
+  } catch (error) {
+    void error;
+  }
+  if (!matchesProject) await page.goto(`${DESIGN_URL}/p/${projectId}`, { waitUntil: 'domcontentloaded' });
   const ready = await waitForReady(page);
   await omelette(page, 'GetProjectData', { projectId }, ready.org);
   await page.locator('div.ProseMirror[contenteditable="true"]').first().waitFor({ state: 'visible', timeout: 30_000 });

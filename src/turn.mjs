@@ -10,7 +10,7 @@ import { monitorPendingTurn } from './pending-monitor.mjs';
 const locks = new Map();
 const SUBMIT_TIMEOUT_MS = 30_000;
 const TURN_START_TIMEOUT_MS = 15_000;
-const defaultTurnTimeout = () => Number(process.env.CLAUDE_DESIGN_TURN_TIMEOUT_MS || 300_000);
+const defaultTurnTimeout = () => Number(process.env['CLAUDE_DESIGN_TURN_TIMEOUT_MS'] || 300_000);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const responseStatus = (r) => (typeof r.status === 'function' ? r.status() : r.status);
@@ -137,7 +137,7 @@ async function runUnlocked(session, projectId, prompt, options) {
       quietMs,
       stableCycles,
     });
-    holdPage(session.page, completion, 'async-turn-finished');
+    holdPage(session.page, completion, 'async-turn-finished', { projectId });
     return { submitted: true, pending: true };
   }
 

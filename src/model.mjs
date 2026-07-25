@@ -26,7 +26,17 @@ export function parseModelRequest(input) {
 }
 
 export function resolveOptionalModel(model) {
-  return model ? parseModelRequest(model) : null;
+  return model ? parseModelRequest(model) : parseModelRequest('opus-5');
+}
+
+export function resolveEffort(request, effort) {
+  return effort ?? (request.family === 'opus' ? 'high' : null);
+}
+
+export function matchEffortOption(labels, effort) {
+  const requested = String(effort).trim().toLowerCase();
+  const index = labels.findIndex((label) => String(label).trim().match(/^[a-z]+/i)?.[0].toLowerCase() === requested);
+  return index < 0 ? null : { index, effort: requested };
 }
 
 export function withResolvedModel(result, selectedModel) {
@@ -50,6 +60,18 @@ function requestedLabel(request) {
 
 function extractModelLabel(text) {
   return String(text).match(MODEL_LABEL_PATTERN)?.[0] || '';
+}
+
+async function confirmSelection(page) {
+  const confirm = page.locator('[data-testid="confirm-dialog-confirm"]').first();
+  try {
+    await confirm.waitFor({ state: 'visible', timeout: 2_000 });
+  } catch (error) {
+    if (error?.name !== 'TimeoutError') throw error;
+    return;
+  }
+  await confirm.click();
+  await confirm.waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
 export async function applyModelToPage(page, request) {
@@ -82,18 +104,7 @@ export async function applyModelToPage(page, request) {
     await menuItems.nth(selected.index).click();
     menuOpen = false;
 
-    const confirm = page.locator('[data-testid="confirm-dialog-confirm"]').first();
-    let needsConfirmation = true;
-    try {
-      await confirm.waitFor({ state: 'visible', timeout: 2_000 });
-    } catch (error) {
-      if (error?.name !== 'TimeoutError') throw error;
-      needsConfirmation = false;
-    }
-    if (needsConfirmation) {
-      await confirm.click();
-      await confirm.waitFor({ state: 'hidden', timeout: 10_000 });
-    }
+    await confirmSelection(page);
 
     await page.locator('button[title="Change model"]').filter({ hasText: selected.uiLabel }).first()
       .waitFor({ state: 'visible', timeout: 10_000 });
@@ -104,5 +115,32 @@ export async function applyModelToPage(page, request) {
   } catch (error) {
     if (menuOpen) await page.keyboard.press('Escape').catch(() => {});
     throw error;
+  }
+}
+
+export async function applyEffortToPage(page, effort) {
+  const modelButton = page.locator('button[title="Change model"]').first();
+  try {
+    await modelButton.waitFor({ state: 'visible', timeout: 5_000 });
+    await modelButton.click();
+    const effortItem = page.locator('[role="menuitem"]').filter({ hasText: /^Effort/i }).first();
+    await effortItem.waitFor({ state: 'visible', timeout: 3_000 });
+    await effortItem.click();
+
+    const effortMenu = page.locator('[role="menu"][data-nested]').first();
+    await effortMenu.waitFor({ state: 'visible', timeout: 3_000 });
+    const menuItems = effortMenu.locator('[role="menuitemradio"]');
+    const selected = matchEffortOption(await menuItems.allTextContents(), effort);
+    if (!selected) throw new Error(`Effort "${effort}" not available`);
+
+    await menuItems.nth(selected.index).click();
+    await confirmSelection(page);
+    await modelButton.filter({ hasText: selected.effort }).first()
+      .waitFor({ state: 'visible', timeout: 10_000 });
+    return selected.effort;
+  } catch {
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.keyboard.press('Escape').catch(() => {});
+    return 'unavailable';
   }
 }

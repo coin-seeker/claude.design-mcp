@@ -1,5 +1,5 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
-import { applyModelToPage, resolveOptionalModel, withResolvedModel } from './model.mjs';
+import { applyEffortToPage, applyModelToPage, resolveEffort, resolveOptionalModel, withResolvedModel } from './model.mjs';
 import { applyDesignSystem, designSystemHook } from './design-system.mjs';
 import { checkDesign } from './check.mjs';
 import { listDesignSystems } from './list-systems.mjs';
@@ -15,8 +15,8 @@ const schema = (properties, required = []) => ({ type: 'object', properties, req
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
-  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. designSystem grounds the design in one of the account design systems from design_system_list.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
-  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
+  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. designSystem grounds the design in one of the account design systems from design_system_list.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
+  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
@@ -77,12 +77,18 @@ export async function findOrCreateProject(scoped, name, args = {}, deps = {}) {
 }
 
 // One injection point for the two composer flows, so a test can drive them without a browser.
-const FLOW_DEPS = { ensureSession, withOperationPage, findOrCreateProject, awaitDesignReady, applyModelToPage, applyDesignSystem, runGenerateTurn, listAllFiles };
+const FLOW_DEPS = { ensureSession, withOperationPage, findOrCreateProject, awaitDesignReady, applyModelToPage, applyEffortToPage, applyDesignSystem, runGenerateTurn, listAllFiles };
+
+function withResolvedGeneration(result, selectedModel, selectedEffort) {
+  const resolved = withResolvedModel(result, selectedModel);
+  return selectedEffort === null ? resolved : { ...resolved, effort: selectedEffort };
+}
 
 export async function design_create(args = {}, overrides = {}) {
   const deps = { ...FLOW_DEPS, ...overrides };
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
+  const effort = resolveEffort(modelRequest, args.effort);
   const session = await deps.ensureSession({ visible: false });
   const name = derivedName(prompt, args.name);
   return deps.withOperationPage(session, async (page) => {
@@ -90,12 +96,13 @@ export async function design_create(args = {}, overrides = {}) {
     const { projectId, reused } = await deps.findOrCreateProject(scoped, name, args);
     await deps.awaitDesignReady(page, projectId);
     const wait = args.wait !== false;
-    const selectedModel = modelRequest ? await deps.applyModelToPage(page, modelRequest) : null;
+    const selectedModel = await deps.applyModelToPage(page, modelRequest);
+    const selectedEffort = effort === null ? null : await deps.applyEffortToPage(page, effort);
     const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
     const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait, beforeSubmit: attach.hook });
     const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn, ...attach.attached() };
     if (reused) result.reused = true;
-    return withResolvedModel(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel);
+    return withResolvedGeneration(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel, selectedEffort);
   });
 }
 export async function design_iterate(args = {}, overrides = {}) {
@@ -103,16 +110,18 @@ export async function design_iterate(args = {}, overrides = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
+  const effort = resolveEffort(modelRequest, args.effort);
   const session = await deps.ensureSession({ visible: false });
   return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
     await deps.awaitDesignReady(page, projectId);
     const wait = args.wait !== false;
-    const selectedModel = modelRequest ? await deps.applyModelToPage(page, modelRequest) : null;
+    const selectedModel = await deps.applyModelToPage(page, modelRequest);
+    const selectedEffort = effort === null ? null : await deps.applyEffortToPage(page, effort);
     const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
     const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait, beforeSubmit: attach.hook });
     const result = { projectId, ...turn, ...attach.attached() };
-    return withResolvedModel(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel);
+    return withResolvedGeneration(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel, selectedEffort);
   });
 }
 async function design_pull(args = {}) {
@@ -229,7 +238,7 @@ export function createPool(limit) {
 export async function design_variants(args = {}, deps = {}) {
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
-  const model = modelRequest ? `${modelRequest.family}${modelRequest.version ? `-${modelRequest.version}` : ''}` : undefined;
+  const model = `${modelRequest.family}${modelRequest.version ? `-${modelRequest.version}` : ''}`;
   const count = Math.max(1, Math.min(VARIANTS_MAX_COUNT, Number(args.count) || 3));
   const axis = args.axis ? String(args.axis) : null;
   const withPreview = args.preview !== false;

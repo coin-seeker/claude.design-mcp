@@ -4,6 +4,7 @@ import { applyDesignSystem, designSystemHook } from './design-system.mjs';
 import { checkDesign } from './check.mjs';
 import { listDesignSystems } from './list-systems.mjs';
 import { previewProject } from './preview.mjs';
+import { editProjectFile, getProjectFile, isTextProjectFile } from './project-file.mjs';
 import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
 import { awaitDesignReady, ensureSession, loginHelp, withOperationPage } from './session.mjs';
@@ -132,19 +133,15 @@ async function design_pull(args = {}) {
     return pullProject(scoped, project.projectId, args.dir, { zip: Boolean(args.zip) });
   });
 }
-function isText(contentType, filePath) {
-  return /^text\//i.test(contentType) || /(?:json|javascript|xml|svg|html|css)$/i.test(contentType) || /\.(?:txt|md|json|js|jsx|ts|tsx|css|html|svg)$/i.test(filePath);
-}
-
 async function design_get(args = {}) {
   const projectId = requireString(args.projectId, 'projectId');
   const filePath = requireString(args.path, 'path');
   const session = await ensureSession({ visible: false });
   return withOperationPage(session, async (page) => {
-    const file = await omelette(page, 'GetFile', { projectId, path: filePath }, session.org);
+    const file = await getProjectFile({ ...session, page }, projectId, filePath);
     const bytes = decodeToBuffer(file.content || '');
     const contentType = String(file.contentType || 'application/octet-stream');
-    if (isText(contentType, filePath)) return { projectId, path: filePath, contentType, version: file.version, text: bytes.toString('utf8') };
+    if (isTextProjectFile(contentType, filePath)) return { projectId, path: filePath, contentType, version: file.version, text: bytes.toString('utf8') };
     return { projectId, path: filePath, contentType, version: file.version, binary: true, bytes: bytes.length };
   });
 }
@@ -178,7 +175,7 @@ async function design_edit(args = {}) {
   const filePath = requireString(args.path, 'path');
   if (!Array.isArray(args.edits)) throw new Error('edits must be an array');
   const session = await ensureSession({ visible: false });
-  return withOperationPage(session, (page) => omelette(page, 'EditFile', { projectId, path: filePath, edits: args.edits }, session.org));
+  return withOperationPage(session, (page) => editProjectFile({ ...session, page }, projectId, filePath, args.edits));
 }
 
 // Deletion is irreversible, so it stays behind an explicit confirm flag the caller must opt into.
@@ -263,13 +260,13 @@ export async function design_variants(args = {}, deps = {}) {
   return { prompt, axis, count, variants };
 }
 
+async function design_system_list(_args = {}, deps = {}) {
+  return listDesignSystems(deps);
+}
+
 // The package directory is produced elsewhere (dashboard materializer); this only runs the sync command in it.
 async function design_system_sync(args = {}) {
   return runDesignSync({ dir: requireString(args.dir, 'dir'), timeoutMs: args.timeoutMs });
-}
-
-async function design_system_list(_args = {}, deps = {}) {
-  return listDesignSystems(deps);
 }
 
 export const IMPL = { design_login, design_list, design_create, design_iterate, design_pull, design_preview, design_get, design_status, design_check, design_edit, design_delete, design_variants, design_system_sync, design_system_list };

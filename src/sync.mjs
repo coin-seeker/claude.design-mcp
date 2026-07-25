@@ -9,9 +9,11 @@
 // in the directory it is given.
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { expandHome } from './helpers.mjs';
+import { writeProjectTextFile } from './project-file.mjs';
 
 export const DEFAULT_SYNC_TIMEOUT_MS = 15 * 60 * 1000;
 export const SYNC_ARGS = ['-p', '/design-sync', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
@@ -25,6 +27,8 @@ const NAME_AFTER_URL_RE = /^[^"\u201c\n]{0,40}["\u201c]([^"\u201d\n]{1,80})["\u2
 const QUOTED_RE = /["\u201c]([^"\u201d\n]{2,80})["\u201d]/gu;
 const NAME_NOISE_RE = /[\\/={}<>]/u;
 const RAW_MAX_CHARS = 20_000;
+const TOKEN_IMPORT_RE = /^@import\s+["']\.\/tokens\/tokens\.json["']\s*;/u;
+const IMPORT_LINE_RE = /^@import\s+(?:url\()?\s*["'][^"']+["']\s*\)?\s*;$/u;
 
 function tailOf(text) {
   const value = String(text ?? '');
@@ -96,6 +100,70 @@ export function resolveTimeoutMs(explicit, env = process.env) {
   return Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_SYNC_TIMEOUT_MS;
 }
 
+export function isStylesShim(content) {
+  const trimmed = String(content ?? '').trim();
+  if (!trimmed) return false;
+  if (TOKEN_IMPORT_RE.test(trimmed)) return true;
+  return trimmed.split(/\r?\n/u).every((line) => IMPORT_LINE_RE.test(line.trim()));
+}
+
+export function stripLeadingThemeInline(content) {
+  const source = String(content ?? '');
+  const leading = /^\s*@theme\s+inline\s*\{/u.exec(source);
+  if (!leading) return source;
+  const open = source.indexOf('{', leading.index);
+  let depth = 0;
+  let quote = null;
+  let inComment = false;
+  let escaped = false;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (inComment) {
+      if (char === '*' && next === '/') {
+        inComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      inComment = true;
+      index += 1;
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(index + 1).trimStart();
+    }
+  }
+  return source;
+}
+
+export async function flattenSyncedStyles({ dir, projectId, onProgress, writeProjectFile = writeProjectTextFile }) {
+  try {
+    const bundleDir = path.join(dir, 'ds-bundle');
+    const styles = await readFile(path.join(bundleDir, 'styles.css'), 'utf8');
+    if (!isStylesShim(styles)) {
+      onProgress?.('flatten: skipped (ds-bundle/styles.css is not an import shim)');
+      return { flattened: false };
+    }
+    const flattenedCss = stripLeadingThemeInline(await readFile(path.join(bundleDir, '_ds_bundle.css'), 'utf8'));
+    await writeProjectFile({ projectId, path: 'styles.css', content: flattenedCss });
+    onProgress?.(`flatten: styles.css → ${Buffer.byteLength(flattenedCss)} bytes`);
+    return { flattened: true };
+  } catch (error) {
+    const flattenError = error instanceof Error ? error.message : String(error);
+    onProgress?.(`flatten: failed (${flattenError})`);
+    return { flattened: false, flattenError };
+  }
+}
+
 export function defaultSpawn({ bin, args, cwd, signal, onProgress, spawnImpl = spawn }) {
   return new Promise((resolve, reject) => {
     const child = spawnImpl(bin, args, { cwd, signal, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -139,12 +207,12 @@ async function withTimeout(run, timeoutMs) {
   }
 }
 
-export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = defaultSpawn, env = process.env } = {}) {
+export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = defaultSpawn, writeProjectFile = writeProjectTextFile, env = process.env } = {}) {
   const requested = String(dir ?? '').trim();
   if (!requested) throw new Error('dir is required');
   const target = path.resolve(expandHome(requested));
   if (!existsSync(path.join(target, 'package.json'))) {
-    return { dir: target, ok: false, error: `package.json not found in ${target} — /design-sync needs a materialized package directory`, raw: null };
+    return { dir: target, ok: false, flattened: false, error: `package.json not found in ${target} — /design-sync needs a materialized package directory`, raw: null };
   }
   const bin = String(env.CLAUDE_DESIGN_CLAUDE_BIN || 'claude');
   const limitMs = resolveTimeoutMs(timeoutMs, env);
@@ -152,5 +220,8 @@ export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = de
     (signal) => spawnImpl({ bin, args: SYNC_ARGS, cwd: target, timeoutMs: limitMs, signal, onProgress }),
     limitMs,
   );
-  return { dir: target, ...evaluateSyncOutput(outcome) };
+  const synced = { dir: target, ...evaluateSyncOutput(outcome) };
+  if (!synced.ok) return { ...synced, flattened: false };
+  const flattened = await flattenSyncedStyles({ dir: target, projectId: synced.projectId, onProgress, writeProjectFile });
+  return { ...synced, ...flattened };
 }

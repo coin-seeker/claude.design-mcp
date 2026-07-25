@@ -137,9 +137,11 @@ node src/server.mjs preview <projectId>
 
 ## Design-system sync
 
-`design_system_sync` (CLI: `sync <dir>`) is the one tool that does **not** drive the browser: it
-runs `claude -p "/design-sync" --dangerously-skip-permissions --output-format json` with the
-package folder as its working directory and reports what the sync uploaded.
+`design_system_sync` (CLI: `sync <dir>`) runs
+`claude -p "/design-sync" --dangerously-skip-permissions --output-format stream-json --verbose`
+with the package folder as its working directory and reports what the sync uploaded. After a
+successful tokens-only sync, it uses the logged-in Chrome/CDP session to replace the uploaded
+`styles.css` import shim with the generated custom-property CSS from `ds-bundle/_ds_bundle.css`.
 
 - The folder must already be a package (`package.json` + a CSS entry such as `styles.css`, plus
   `tokens/*.json`, `guidelines/*.md`, `README.md`). Components are optional — a tokens-only
@@ -152,6 +154,8 @@ package folder as its working directory and reports what the sync uploaded.
   pipeline regenerates the folder, snapshot `.design-sync/` before replacing it and restore it
   afterwards — this tool never writes the package itself.
 - A first sync takes ~10 minutes; unchanged re-runs take ~2. The CLI exits `1` on a failed sync.
+- The result adds `flattened: true|false`. A post-sync browser/write failure is reported as
+  `flattenError` while the completed upload remains `ok: true`.
 
 `design_system_list` (CLI: `list-systems`) is the read side of the same feature. claude.ai has no
 separate design-systems endpoint — design systems are returned by the ordinary project list RPC

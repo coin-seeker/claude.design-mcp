@@ -18,6 +18,32 @@ claude.ai/design generates **on your own account** (not a local imitation).
   run in-page so they share your session + Cloudflare clearance.
 - **Not a `claude -p` mimic.** Every design is produced by claude.ai/design itself.
 
+## Official Design MCP and protocol verdict (2026-08-12)
+
+This project is an independent CDP browser-automation MCP. It does not call the official
+`api.anthropic.com/v1/design/mcp` endpoint. As described in [How it works](#how-it-works), it
+uses `playwright-core` and CDP to drive a real Chrome session that is already logged into the
+actual `claude.ai/design` web app.
+
+The claude.ai/design UI's **Create prompt for Claude Code** export message hands off a project
+URL in the form `https://claude.ai/design/p/<projectId>`. For this server, the matching flow is
+to extract `<projectId>` from that URL and call `design_pull`. The official Design MCP is not
+needed to receive the generated files.
+
+The MCP protocol revision discussed around 2026-07-28, including the stateless wire-protocol
+change adopted by some MCP ecosystems, has no practical effect on the current OpenCode stdio
+client integration or tool contract. This server responds to initialization with the fixed
+`protocolVersion: "2024-11-05"` handshake. On 2026-08-12, the unchanged existing test suite,
+including `node test/mcp.test.mjs`, passed against the unmodified source and test files.
+
+Re-review this verdict if any of these conditions occurs:
+
+1. The OpenCode MCP client drops support for the older handshake version this server returns.
+2. The project decides to replace its CDP browser-automation approach with the official
+   `api.anthropic.com/v1/design/mcp` endpoint.
+3. claude.ai changes its authentication or session model in a way that affects the CDP-driven
+   login flow.
+
 ## Tools
 
 | Tool | Does |

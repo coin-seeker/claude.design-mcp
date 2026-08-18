@@ -1,12 +1,16 @@
-import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { expandHome } from './helpers.mjs';
+import { expandHome, sanitizeRelPath } from './helpers.mjs';
 
 export const HISTORY_SCHEMA_VERSION = 1;
 export const DEFAULT_HISTORY_DIR = '~/.local/share/opencode-dashboard/claude-design-history';
 export const HISTORY_FILE_NAME = 'events.ndjsonl';
+export const REVISION_SCHEMA_VERSION = 1;
+export const REVISIONS_DIR_NAME = '.revisions';
+export const REVISION_META_NAME = '.meta.json';
+const STAGING_PREFIX = '.staging-';
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 const CALLER_KEYS = ['directory', 'sessionID', 'agent', 'project'];
@@ -29,6 +33,10 @@ export function historyFile() {
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function warn(event, error) {
+  process.stderr.write(`${JSON.stringify({ timestamp: new Date().toISOString(), event, error: String(error?.message || error) })}\n`);
 }
 
 function text(value) {
@@ -124,7 +132,7 @@ function attemptIdFor(tool, projectId) {
 }
 
 // One build per dispatched tools/call: it advances seq and mints the create/iterate attemptId.
-export function buildToolEvent({ tool, args, caller = null, result = null, error = null, durationMs = null } = {}) {
+export function buildToolEvent({ tool, args, caller = null, result = null, error = null, durationMs = null, revision = null } = {}) {
   const safeArgs = isPlainObject(args) ? args : {};
   const ok = !error;
   const projectId = firstText(safeArgs.projectId, result?.projectId, result?.project?.projectId);
@@ -148,6 +156,9 @@ export function buildToolEvent({ tool, args, caller = null, result = null, error
     attemptId: attemptIdFor(tool, projectId),
     caller: normalizeCaller(caller),
     pullKind: pullKindOf(tool, safeArgs),
+    // Top level on purpose: the dashboard ingest reads `raw.revision`, so nesting it under
+    // `result` would leave latest_revision/latest_complete_revision permanently NULL.
+    revision: text(revision),
     result: summarizeResult(result),
   };
 }
@@ -163,7 +174,7 @@ export function recordToolEvent(event) {
     return true;
   } catch (error) {
     // History is observability, never a precondition: warn on stderr and let the tool response through.
-    process.stderr.write(`${JSON.stringify({ timestamp: new Date().toISOString(), event: 'history.write_failed', error: String(error?.message || error) })}\n`);
+    warn('history.write_failed', error);
     return false;
   }
 }
@@ -173,7 +184,122 @@ export function recordToolCall(input) {
     const event = buildToolEvent(input);
     return recordToolEvent(event) ? event : null;
   } catch (error) {
-    process.stderr.write(`${JSON.stringify({ timestamp: new Date().toISOString(), event: 'history.build_failed', error: String(error?.message || error) })}\n`);
+    warn('history.build_failed', error);
     return null;
   }
+}
+
+// `<YYYYMMDDTHHmmssSSS>-<uuid8>`: milliseconds plus a random suffix so two pulls in the same
+// second cannot collide, while plain lexicographic sort still yields chronological order.
+function newRevisionId() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.(\d{3})Z$/, '$1');
+  return `${stamp}-${randomUUID().slice(0, 8)}`;
+}
+
+// The id becomes a directory name, and projectId can originate from a tool argument.
+function revisionProjectKey(projectId) {
+  const key = text(projectId);
+  return key !== null && /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(key) ? key : null;
+}
+
+// Manifest entries only: reading the pulled tree instead would snapshot files this pull never wrote.
+function manifestDigests(dir, files) {
+  const byPath = new Map();
+  for (const file of files) {
+    const rel = sanitizeRelPath(file?.path, dir); // rejects absolute paths and ../ escapes
+    if (byPath.has(rel)) continue;
+    const bytes = readFileSync(path.join(dir, rel));
+    byPath.set(rel, { path: rel, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), body: bytes });
+  }
+  return [...byPath.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+// One hash over every (path, sha256) pair: equal aggregates mean every file matched.
+function aggregateHash(entries) {
+  const digest = createHash('sha256');
+  for (const entry of entries) digest.update(`${entry.path}\0${entry.sha256}\n`);
+  return digest.digest('hex');
+}
+
+// Only the newest revision is compared; an unreadable one falls back to "snapshot anyway"
+// so a half-written directory can never suppress a good snapshot.
+function previousMeta(projectRoot) {
+  try {
+    const names = readdirSync(projectRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')) // also drops .staging-*
+      .map((entry) => entry.name)
+      .sort();
+    if (!names.length) return null;
+    const meta = JSON.parse(readFileSync(path.join(projectRoot, names.at(-1), REVISION_META_NAME), 'utf8'));
+    return typeof meta?.hash === 'string' ? meta : null;
+  } catch {
+    return null;
+  }
+}
+
+// Post-processing for a successful design_pull: copies the manifest into
+// `<CLAUDE_DESIGN_DIR>/.revisions/<projectId>/<revisionId>/`, which is a sibling of the pulled
+// tree so a snapshot can never recurse into itself. Returns the revisionId, or null when the
+// content is unchanged or the snapshot failed - the pull result is never affected either way.
+export function snapshotRevision({ projectId, dir, files = [], errors = [] } = {}) {
+  const projectKey = revisionProjectKey(projectId);
+  const pulledDir = text(dir);
+  if (projectKey === null || pulledDir === null) return null;
+  const source = path.resolve(expandHome(pulledDir));
+  const projectRoot = path.join(path.dirname(source), REVISIONS_DIR_NAME, projectKey);
+  const revisionId = newRevisionId();
+  const staging = path.join(projectRoot, `${STAGING_PREFIX}${revisionId}`);
+  try {
+    const entries = manifestDigests(source, Array.isArray(files) ? files : []);
+    const hash = aggregateHash(entries);
+    const incomplete = (Array.isArray(errors) ? errors.length : 0) > 0;
+    const previous = previousMeta(projectRoot);
+    // Completeness is part of the identity: an incomplete -> complete flip over identical bytes
+    // must still mint a revision, otherwise latest_complete_revision stays empty forever.
+    if (previous && previous.hash === hash && previous.incomplete === incomplete) return null;
+    mkdirSync(staging, { recursive: true, mode: DIR_MODE });
+    for (const entry of entries) {
+      const target = path.join(staging, entry.path);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, entry.body);
+    }
+    const meta = {
+      v: REVISION_SCHEMA_VERSION,
+      revisionId,
+      projectId: projectKey,
+      pullTs: new Date().toISOString(),
+      fileCount: entries.length,
+      hash,
+      incomplete,
+      errorCount: Array.isArray(errors) ? errors.length : 0,
+      files: entries.map((entry) => ({ path: entry.path, bytes: entry.bytes, sha256: entry.sha256 })),
+    };
+    writeFileSync(path.join(staging, REVISION_META_NAME), `${JSON.stringify(meta, null, 2)}\n`);
+    renameSync(staging, path.join(projectRoot, revisionId)); // atomic: readers only ever see a finished revision
+    return revisionId;
+  } catch (error) {
+    try {
+      rmSync(staging, { recursive: true, force: true });
+    } catch {
+      // a leftover .staging-* dir is filtered out of every listing, so it is not worth failing over
+    }
+    warn('history.snapshot_failed', error);
+    return null;
+  }
+}
+
+// Snapshot eligibility rides on pullKind alone: zip writes an archive and custom-dir writes
+// outside the artifacts root, so neither can be served as a revision.
+export function snapshotForToolCall({ tool, args, result, error = null } = {}) {
+  if (tool !== 'design_pull' || error || !isPlainObject(result)) return null;
+  const safeArgs = isPlainObject(args) ? args : {};
+  if (pullKindOf(tool, safeArgs) !== 'default') return null;
+  return snapshotRevision({
+    // Same precedence as buildToolEvent: the directory name must match the event's projectId
+    // or the viewer cannot find the revisions of the project it is showing.
+    projectId: firstText(safeArgs.projectId, result.projectId, result.project?.projectId),
+    dir: result.dir,
+    files: result.files,
+    errors: result.errors,
+  });
 }

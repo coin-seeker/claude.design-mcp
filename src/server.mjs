@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseGenerateFlags, parseSyncFlags } from './cli.mjs';
-import { recordToolCall, splitCallerArgs } from './history.mjs';
+import { recordToolCall, snapshotForToolCall, splitCallerArgs } from './history.mjs';
 import { runDesignSync } from './sync.mjs';
 import { IMPL, TOOLS } from './tools.mjs';
 
@@ -43,8 +43,11 @@ async function handle(message) {
     } catch (error) {
       outcome = { error };
     }
+    const durationMs = Date.now() - startedAt; // measured before the snapshot: copying is not tool time
+    // Post-processing only; a refused or failed snapshot just yields revision: null.
+    const revision = snapshotForToolCall({ tool: params.name, args: rest, result: outcome.result, error: outcome.error });
     // Exactly one history line per dispatch, success or failure; recordToolCall never throws.
-    recordToolCall({ tool: params.name, args: rest, caller, result: outcome.result, error: outcome.error, durationMs: Date.now() - startedAt });
+    recordToolCall({ tool: params.name, args: rest, caller, result: outcome.result, error: outcome.error, durationMs, revision });
     if (outcome.error) send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `error: ${outcome.error.message}` }], isError: true } });
     else send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: outcome.text }] } });
     return;

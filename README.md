@@ -74,9 +74,21 @@ Every `tools/call` dispatch appends exactly one JSON line to
 override the folder with `CLAUDE_DESIGN_HISTORY_DIR`), so a prompt history survives across MCP restarts.
 A line carries `v`, `eventId`, `seq`, `ts`, `tool`, `durationMs`, `ok`, `error`, `projectId`, `projects`,
 `projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `wait`, `attemptId`,
-`caller`, `pullKind`, and a whitelisted `result` summary (counts and ids only — **never** file contents,
-base64, or environment values). Recording is best-effort observability: a failed write only warns on
-stderr and never turns a working tool call into an error. The CLI path is not recorded.
+`caller`, `pullKind`, `revision`, and a whitelisted `result` summary (counts and ids only — **never** file
+contents, base64, or environment values). Recording is best-effort observability: a failed write only warns
+on stderr and never turns a working tool call into an error. The CLI path is not recorded.
+
+### Revision snapshots
+
+A successful plain `design_pull` (`pullKind: "default"` — no `dir`, no `zip`) also snapshots the pulled
+manifest into `<CLAUDE_DESIGN_DIR>/.revisions/<projectId>/<revisionId>/`, outside the pulled tree, so a
+design's edit history can be diffed later. `revisionId` is `<YYYYMMDDTHHmmssSSS>-<uuid8>` in UTC, so name
+order is time order. Each folder carries a `.meta.json` with the per-file SHA-256 list, a total `hash`, and
+`incomplete: true` when the pull reported partial file errors. The snapshot is staged in
+`.staging-<revisionId>/` and atomically renamed, so listers only ever see finished revisions (skip any name
+starting with `.`). A pull whose content hash and completeness both match the previous revision is skipped
+and reports `revision: null`, meaning "unchanged — the previous revision is still current". Snapshot
+failures are non-fatal in the same way: `revision: null` plus an stderr warning, tool result untouched.
 
 ## Setup
 

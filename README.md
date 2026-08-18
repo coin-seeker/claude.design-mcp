@@ -63,6 +63,21 @@ Re-review this verdict if any of these conditions occurs:
 | `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
 | `design_system_list` | List the design systems on your account (name + id), across every page of the project list |
 
+Every tool also accepts an optional `caller` object — `{ directory, sessionID, agent, project? }` — that
+the MCP client may inject to say who is calling. It is never a generation argument: the dispatcher strips
+it before the handler runs and only records it in the call history.
+
+## Call history
+
+Every `tools/call` dispatch appends exactly one JSON line to
+`~/.local/share/opencode-dashboard/claude-design-history/events.ndjsonl` (dir `0700`, file `0600`;
+override the folder with `CLAUDE_DESIGN_HISTORY_DIR`), so a prompt history survives across MCP restarts.
+A line carries `v`, `eventId`, `seq`, `ts`, `tool`, `durationMs`, `ok`, `error`, `projectId`, `projects`,
+`projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `wait`, `attemptId`,
+`caller`, `pullKind`, and a whitelisted `result` summary (counts and ids only — **never** file contents,
+base64, or environment values). Recording is best-effort observability: a failed write only warns on
+stderr and never turns a working tool call into an error. The CLI path is not recorded.
+
 ## Setup
 
 ```bash
@@ -163,6 +178,7 @@ node src/server.mjs preview <projectId>
 - `CLAUDE_DESIGN_CHROME` — path to Google Chrome (default: macOS Google Chrome)
 - `CLAUDE_DESIGN_CDP_PORT` — remote-debugging port (default `9377`)
 - `CLAUDE_DESIGN_DIR` — where `design_pull` / `design_preview` write, each into its own `<project>/` folder (default: the working folder); an explicit `dir` argument is used verbatim
+- `CLAUDE_DESIGN_HISTORY_DIR` — where the `tools/call` history is appended (default `~/.local/share/opencode-dashboard/claude-design-history`, file `events.ndjsonl`)
 - `CLAUDE_DESIGN_HEADLESS` — set `1` to drive headless Chrome instead of off-screen
 - `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~360s, iterate ~240s defaults)
 - `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `20000`)

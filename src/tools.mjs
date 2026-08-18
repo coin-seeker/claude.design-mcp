@@ -14,7 +14,10 @@ import { generateVariants } from './variants.mjs';
 export { createPool, variantPrompt } from './variants.mjs';
 const LOGIN_TIMEOUT_MS = 180_000;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const schema = (properties, required = []) => ({ type: 'object', properties, required });
+// Every tool takes an optional `caller` ({ directory, sessionID, agent, project? }): transport metadata the
+// client injects for the call history. The dispatcher strips it, so no handler ever receives it as an argument.
+const CALLER_PROPERTY = { caller: { type: 'object' } };
+const schema = (properties, required = []) => ({ type: 'object', properties: { ...properties, ...CALLER_PROPERTY }, required });
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseGenerateFlags, parseSyncFlags } from './cli.mjs';
+import { recordToolCall, splitCallerArgs } from './history.mjs';
 import { runDesignSync } from './sync.mjs';
 import { IMPL, TOOLS } from './tools.mjs';
 
@@ -13,7 +14,7 @@ async function handle(message) {
     send({ jsonrpc: '2.0', id, result: {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'claude.design-mcp', version: '0.4.0' },
+      serverInfo: { name: 'claude.design-mcp', version: '0.5.0' },
     } });
     return;
   }
@@ -33,12 +34,19 @@ async function handle(message) {
       send({ jsonrpc: '2.0', id, error: { code: -32601, message: `unknown tool ${params?.name}` } });
       return;
     }
+    const { caller, rest } = splitCallerArgs(params?.arguments ?? {});
+    const startedAt = Date.now();
+    let outcome;
     try {
-      const result = await fn(params.arguments || {});
-      send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } });
+      const result = await fn(rest);
+      outcome = { result, text: JSON.stringify(result, null, 2) };
     } catch (error) {
-      send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `error: ${error.message}` }], isError: true } });
+      outcome = { error };
     }
+    // Exactly one history line per dispatch, success or failure; recordToolCall never throws.
+    recordToolCall({ tool: params.name, args: rest, caller, result: outcome.result, error: outcome.error, durationMs: Date.now() - startedAt });
+    if (outcome.error) send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `error: ${outcome.error.message}` }], isError: true } });
+    else send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: outcome.text }] } });
     return;
   }
   if (id !== undefined) send({ jsonrpc: '2.0', id, error: { code: -32601, message: `unknown method ${method}` } });

@@ -1,6 +1,6 @@
 import { decodeToBuffer, sanitizeName } from './helpers.mjs';
 import { applyEffortToPage, applyModelToPage, resolveEffort, resolveOptionalModel, withResolvedModel } from './model.mjs';
-import { applyDesignSystem, designSystemHook } from './design-system.mjs';
+import { applyDesignSystem, assertDesignSystemChoice, designSystemChoiceEcho, designSystemHook } from './design-system.mjs';
 import { checkDesign } from './check.mjs';
 import { listDesignSystems } from './list-systems.mjs';
 import { previewProject } from './preview.mjs';
@@ -21,7 +21,7 @@ const schema = (properties, required = []) => ({ type: 'object', properties: { .
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
-  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. designSystem grounds the design in one of the account design systems from design_system_list.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
+  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. Grounding is mandatory: pass exactly one of designSystem (a name from design_system_list / list_claude_synced_systems) or withoutDesignSystem: true (optionally with withoutDesignSystemReason), never both, never neither. The call is refused before any browser or project is created.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' }, withoutDesignSystem: { type: 'boolean' }, withoutDesignSystemReason: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
   { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
   { name: 'design_preview', description: 'Render a project\'s self-contained HTML to a full-page PNG screenshot for visual review.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
@@ -30,7 +30,7 @@ export const TOOLS = [
   { name: 'design_check', description: 'Poll the completion state of a pending design generation. Returns status: generating | awaiting_input | done | no_output | interrupted | stalled | resume_exhausted.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_edit', description: 'Apply direct string edits to one Claude Design project file.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' }, edits: { type: 'array' } }, ['projectId', 'path', 'edits']) },
   { name: 'design_delete', description: 'Delete one Claude Design project. Only call with confirm:true when the user explicitly asked to delete the project.', inputSchema: schema({ projectId: { type: 'string' }, confirm: { type: 'boolean' } }, ['projectId']) },
-  { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots. designSystem grounds every variant in the same account design system.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' } }, ['prompt']) },
+  { name: 'design_variants', description: 'Generate multiple design variants of one prompt in parallel (max 3 concurrent), each as its own project, optionally with preview screenshots. designSystem grounds every variant in the same account design system. Grounding is mandatory: pass exactly one of designSystem or withoutDesignSystem: true (optionally with withoutDesignSystemReason), never both, never neither. The whole fan-out is refused before any project is created.', inputSchema: schema({ prompt: { type: 'string' }, count: { type: 'number' }, axis: { type: 'string' }, name: { type: 'string' }, preview: { type: 'boolean' }, model: { type: 'string' }, designSystem: { type: 'string' }, withoutDesignSystem: { type: 'boolean' }, withoutDesignSystemReason: { type: 'string' } }, ['prompt']) },
   { name: 'design_system_sync', description: 'Sync a materialized design-system package directory to claude.ai using Claude Code /design-sync. The package must contain package.json and styles.css.', inputSchema: schema({ dir: { type: 'string' } }, ['dir']) },
   { name: 'design_system_list', description: 'List the claude.ai design systems visible to the logged-in account.', inputSchema: schema({}) },
 ];
@@ -92,6 +92,8 @@ function withResolvedGeneration(result, selectedModel, selectedEffort) {
 
 export async function design_create(args = {}, overrides = {}) {
   const deps = { ...FLOW_DEPS, ...overrides };
+  // First statement on purpose: the choice is settled before a session, a page, or a project exists.
+  const choice = assertDesignSystemChoice(args);
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
   const effort = resolveEffort(modelRequest, args.effort);
@@ -103,14 +105,14 @@ export async function design_create(args = {}, overrides = {}) {
     const wait = args.wait !== false;
     let selectedModel = null;
     let selectedEffort = null;
-    const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
+    const attach = designSystemHook(choice.designSystem, deps.applyDesignSystem);
     const prepareComposer = async (target) => {
       selectedModel = await deps.applyModelToPage(target, modelRequest);
       selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort);
       await attach.hook?.(target);
     };
     const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait, beforeSubmit: prepareComposer });
-    const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn, ...attach.attached() };
+    const result = { projectId, name, url: `https://claude.ai/design/p/${projectId}`, ...turn, ...attach.attached(), ...designSystemChoiceEcho(choice) };
     if (reused) result.reused = true;
     return withResolvedGeneration(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel, selectedEffort);
   });
@@ -212,7 +214,10 @@ async function design_preview(args = {}) {
 }
 
 export async function design_variants(args = {}, deps = {}) {
-  return generateVariants(args, {
+  // Gate here rather than inside the fan-out: generateVariants turns a failing create into a per-variant
+  // error field, so a rejection down there would read as a partial success instead of a refusal.
+  const choice = assertDesignSystemChoice(args);
+  return generateVariants({ ...args, ...choice }, {
     create: deps.create || design_create,
     preview: deps.preview || design_preview,
     concurrency: deps.concurrency,

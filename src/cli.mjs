@@ -4,6 +4,13 @@ const GENERATE_FLAGS = {
   '--design-system': { key: 'designSystem' },
 };
 
+// create-only: opting out of a design system is a choice the composer picker can still honour, and the
+// picker is gone by the time iterate runs, so iterate must keep rejecting the flag as unknown.
+const CREATE_FLAGS = {
+  ...GENERATE_FLAGS,
+  '--without-design-system': { key: 'withoutDesignSystem', value: true },
+};
+
 const SYNC_FLAGS = {
   '--timeout-ms': { key: 'timeoutMs' },
 };
@@ -28,6 +35,10 @@ export function parseFlags(args, definitions) {
     }
   }
   return { positional, flags };
+}
+
+export function parseCreateFlags(args) {
+  return parseFlags(args, CREATE_FLAGS);
 }
 
 export function parseGenerateFlags(args) {

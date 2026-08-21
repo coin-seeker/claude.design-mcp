@@ -152,6 +152,10 @@ export function buildToolEvent({ tool, args, caller = null, result = null, error
     prompt: text(safeArgs.prompt),
     model: text(safeArgs.model),
     designSystem: text(safeArgs.designSystem),
+    // The deliberate opt-out and its stated reason are part of the grounding decision, so they belong
+    // in the same line as the system that would otherwise have been attached.
+    withoutDesignSystem: flag(safeArgs.withoutDesignSystem),
+    withoutDesignSystemReason: text(safeArgs.withoutDesignSystemReason),
     wait: flag(safeArgs.wait),
     attemptId: attemptIdFor(tool, projectId),
     caller: normalizeCaller(caller),

@@ -48,9 +48,22 @@ export async function generateVariants(args, deps) {
   const withPreview = args.preview !== false;
   const acquire = createPool(deps.concurrency || VARIANTS_MAX_CONCURRENCY);
   const baseName = sanitizeName(args.name || String(prompt).replace(/\s+/g, ' ').slice(0, 64));
+  // fresh is forced: every variant carries an explicit `-vN` name, and find-or-create would otherwise
+  // reuse a same-named project from an earlier fan-out: a project that already holds a design has no
+  // composer picker left, so the design system would silently fail to attach.
+  const create = (index) => deps.create({
+    prompt: variantPrompt(prompt, axis, index, count),
+    name: `${baseName}-v${index + 1}`,
+    fresh: true,
+    timeoutMs: args.timeoutMs,
+    model,
+    designSystem: args.designSystem,
+    withoutDesignSystem: args.withoutDesignSystem,
+    withoutDesignSystemReason: args.withoutDesignSystemReason,
+  });
   const variants = await Promise.all(Array.from({ length: count }, (_, index) => acquire(async () => {
     try {
-      const created = await deps.create({ prompt: variantPrompt(prompt, axis, index, count), name: `${baseName}-v${index + 1}`, timeoutMs: args.timeoutMs, model, designSystem: args.designSystem });
+      const created = await create(index);
       if (!withPreview) return { index, ...created, image: null };
       try {
         const shot = await deps.preview({ projectId: created.projectId });
@@ -62,5 +75,8 @@ export async function generateVariants(args, deps) {
       return { index, error: String(error?.message || error) };
     }
   })));
-  return { prompt, axis, count, variants };
+  const optOut = args.withoutDesignSystem === true
+    ? { withoutDesignSystem: true, ...(args.withoutDesignSystemReason ? { withoutDesignSystemReason: args.withoutDesignSystemReason } : {}) }
+    : {};
+  return { prompt, axis, count, ...optOut, variants };
 }

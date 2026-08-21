@@ -50,8 +50,8 @@ Re-review this verdict if any of these conditions occurs:
 |------|------|
 | `design_login` | One-time: open Chrome to log into claude.ai/design (session persists) |
 | `design_list` | List your claude.ai/design projects |
-| `design_create` | Create a project and generate a design from a prompt — `prompt`, `name?`, `wait?`, `model?`, `designSystem?`, `fresh?` |
-| `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, `count?`, `axis?`, `name?`, `preview?`, `model?`, `designSystem?` |
+| `design_create` | Create a project and generate a design from a prompt — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `name?`, `wait?`, `model?`, `fresh?` |
+| `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `count?`, `axis?`, `name?`, `preview?`, `model?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?`, `designSystem?` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
@@ -73,8 +73,8 @@ Every `tools/call` dispatch appends exactly one JSON line to
 `~/.local/share/opencode-dashboard/claude-design-history/events.ndjsonl` (dir `0700`, file `0600`;
 override the folder with `CLAUDE_DESIGN_HISTORY_DIR`), so a prompt history survives across MCP restarts.
 A line carries `v`, `eventId`, `seq`, `ts`, `tool`, `durationMs`, `ok`, `error`, `projectId`, `projects`,
-`projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `wait`, `attemptId`,
-`caller`, `pullKind`, `revision`, and a whitelisted `result` summary (counts and ids only — **never** file
+`projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `withoutDesignSystem`,
+`withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, and a whitelisted `result` summary (counts and ids only — **never** file
 contents, base64, or environment values). Recording is best-effort observability: a failed write only warns
 on stderr and never turns a working tool call into an error. The CLI path is not recorded.
 
@@ -109,8 +109,8 @@ Register as a local MCP (opencode example):
 node src/server.mjs login
 node src/server.mjs list
 node src/server.mjs list-systems
-node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus
 node src/server.mjs create "simple pricing card" pricing --design-system "Frontend Design System"
+node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus --without-design-system
 node src/server.mjs iterate <projectId> "add a dark mode toggle to the header" --model sonnet
 node src/server.mjs check <projectId>
 node src/server.mjs pull <projectId|name>
@@ -131,7 +131,7 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
   `anthropic/claude-opus-5`. New family versions become available automatically when
   they appear in the site menu. If a requested version is unavailable, the error lists
   the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
-- `design_create`, `design_iterate`, and `design_variants` accept an optional `designSystem`
+- `design_create`, `design_iterate`, and `design_variants` accept a `designSystem`
   (CLI `--design-system`), the name of one of the account design systems reported by
   `design_system_list`. It is matched case-insensitively, an unambiguous partial name works,
   and an unknown name errors with the list the composer offers. The chosen system replaces the
@@ -140,6 +140,21 @@ After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visib
   `design_create`; on `design_iterate` it works only for such a project and otherwise errors
   instead of silently ignoring the request. `design_variants` grounds every variant in the same
   system.
+- **Grounding is mandatory on `design_create` and `design_variants`.** Each call must carry
+  exactly one of a non-blank `designSystem` or `withoutDesignSystem: true` (the boolean `true`,
+  not `"true"` or `1`) — never both, never neither. A violation is refused with one fixed message
+  that names `list_claude_synced_systems` / `design_system_list` as the way to discover the
+  available names, and the refusal happens **before** a browser session, an operation page, or a
+  project exists, so a rejected call leaves the account untouched. On `design_variants` the check
+  runs above the fan-out, so a refused call creates zero projects instead of returning per-variant
+  errors. An opt-out may carry a free-text `withoutDesignSystemReason`, which is only valid
+  together with `withoutDesignSystem: true`; both are echoed in the result and recorded in the
+  call history. The CLI equivalent is `create --without-design-system`; `iterate` rejects that
+  flag as unknown. `design_iterate` is deliberately **not** gated: a project that already holds a
+  design no longer offers the picker, so there is nothing to choose there.
+- `design_variants` forces `fresh: true` on every project it creates. Each variant is named
+  `<base>-v<N>`, and without `fresh` a rerun would reuse the same-named project from an earlier
+  fan-out — a project that already holds a design, where the design system can no longer attach.
 - `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
   to return after a verified `Chat` POST and the bounded question-form watch with
   `{ submitted: true, pending: true }`; the CLI equivalent is `--no-wait`. A click or

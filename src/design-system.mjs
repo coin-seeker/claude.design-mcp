@@ -20,6 +20,39 @@ const DONE_LABEL = 'Done';
 const PICKER_TIMEOUT_MS = 15_000;
 const PICKER_MISSING = 'Design system picker is unavailable in this composer. claude.ai only offers it while a project has produced no design yet, so pass designSystem on design_create (a fresh project) rather than on a project that already holds a design.';
 
+// One fixed sentence for every violation of the choice contract, so callers and end-to-end probes can
+// match the refusal on an exact string instead of parsing per-case wording.
+export const DESIGN_SYSTEM_CHOICE_REQUIRED = 'designSystem is required: pass designSystem: "<name>" to ground this design in one of the account design systems, or withoutDesignSystem: true to opt out deliberately (optionally with withoutDesignSystemReason). Exactly one of the two, never both, never neither. Discover the available names with list_claude_synced_systems (dashboard Design System MCP) or design_system_list (this MCP).';
+export const DESIGN_SYSTEM_REASON_WITHOUT_OPT_OUT = 'withoutDesignSystemReason is only allowed together with withoutDesignSystem: true. Drop the reason, or opt out explicitly with withoutDesignSystem: true.';
+
+const provided = (value) => value !== undefined && value !== null;
+const trimmed = (value) => (typeof value === 'string' ? value.trim() : '');
+
+// Gate for the two tools that can still attach a system (design_create, design_variants): grounding is
+// the default and skipping it has to be a deliberate, recorded decision. Callers run this before any
+// session, browser page, or project exists, so a refusal leaves the account untouched.
+// design_iterate is deliberately excluded: claude.ai hides the picker once a project holds a design,
+// so there is nothing to choose there.
+export function assertDesignSystemChoice(args = {}) {
+  const wantsSystem = provided(args.designSystem);
+  const wantsOptOut = provided(args.withoutDesignSystem);
+  if (wantsSystem === wantsOptOut) throw new Error(DESIGN_SYSTEM_CHOICE_REQUIRED); // both, or neither
+  if (wantsSystem) {
+    const designSystem = trimmed(args.designSystem);
+    if (!designSystem) throw new Error(DESIGN_SYSTEM_CHOICE_REQUIRED); // blank or non-string
+    if (provided(args.withoutDesignSystemReason)) throw new Error(DESIGN_SYSTEM_REASON_WITHOUT_OPT_OUT);
+    return { designSystem };
+  }
+  if (args.withoutDesignSystem !== true) throw new Error(DESIGN_SYSTEM_CHOICE_REQUIRED); // "true", 1, false
+  const reason = trimmed(args.withoutDesignSystemReason);
+  return reason ? { withoutDesignSystem: true, withoutDesignSystemReason: reason } : { withoutDesignSystem: true };
+}
+
+// The grounded branch carries nothing to echo: applyDesignSystem reports the canonical resolved name.
+export function designSystemChoiceEcho(choice) {
+  return choice?.withoutDesignSystem === true ? { ...choice } : {};
+}
+
 // Row text concatenates the name with its badge ("Design System" + "Org default"), and the
 // modal's controls render icon-font glyphs from the private use area into textContent.
 export function designSystemLabel(text) {

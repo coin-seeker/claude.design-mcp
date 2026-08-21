@@ -216,7 +216,7 @@ node src/server.mjs preview <projectId>
 ## Design-system sync
 
 `design_system_sync` (CLI: `sync <dir>`) runs
-`claude -p "/design-sync" --dangerously-skip-permissions --output-format stream-json --verbose`
+`claude -p "/design-sync <pre-approval>" --dangerously-skip-permissions --output-format stream-json --verbose`
 with the package folder as its working directory and reports what the sync uploaded. After a
 successful tokens-only sync, it uses the logged-in Chrome/CDP session to replace the uploaded
 `styles.css` import shim with the generated custom-property CSS from `ds-bundle/_ds_bundle.css`.
@@ -231,6 +231,16 @@ successful tokens-only sync, it uses the logged-in Chrome/CDP session to replace
   to the same project (an unchanged re-run is then a no-op instead of a duplicate). If your
   pipeline regenerates the folder, snapshot `.design-sync/` before replacing it and restore it
   afterwards — this tool never writes the package itself.
+- **The prompt carries a pre-approval (`SYNC_ARGS` in `src/sync.mjs`), and it is load-bearing on a
+  first run.** `/design-sync` asks for two `AskUserQuestion` confirmations when the folder has no
+  pin — accept the time/cost, then confirm the new project's name before `create_project` — and
+  `claude -p` has no `AskUserQuestion` tool, so the turn would end with the question and upload
+  nothing (exit `0`, `subtype: "success"`, no project link). The skill's own escape hatch ("if their
+  request already acknowledged the time/cost… continue without re-asking") is what the pre-approval
+  invokes, and it names the fresh-project creation explicitly. A pinned re-sync never hits either
+  gate, which is why this only ever surfaced on a first-time sync. Claude Code appends the text
+  after the slash command to the skill body as a fenced `## Hint` block, so it must stay one
+  positional string with no triple backtick in it.
 - A first sync takes ~10 minutes; unchanged re-runs take ~2. The CLI exits `1` on a failed sync.
 - The result adds `flattened: true|false`. A post-sync browser/write failure is reported as
   `flattenError` while the completed upload remains `ok: true`.

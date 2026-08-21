@@ -17,7 +17,17 @@ import { listDesignSystems } from './list-systems.mjs';
 import { writeProjectTextFile } from './project-file.mjs';
 
 export const DEFAULT_SYNC_TIMEOUT_MS = 15 * 60 * 1000;
-export const SYNC_ARGS = ['-p', '/design-sync', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
+// `claude -p` has no `AskUserQuestion` tool, so every confirmation the `/design-sync` skill asks for
+// is unanswerable here: the turn ends with the question and nothing uploads. That is invisible on a
+// re-sync (a `.design-sync/` pin skips both gates) and deterministic on a first-time sync, which asks
+// twice — once to accept the time/cost, once to confirm the new project's name before create_project.
+// The skill documents the way out ("If their request already acknowledged the time/cost, note that and
+// continue without re-asking"), so the prompt pre-approves both gates up front. Claude Code appends
+// everything after the slash command to the skill body as a fenced `## Hint` block, so this must stay
+// ONE positional string (a second array element would be parsed as a flag, not as prompt text) and must
+// never contain a triple backtick, which would close that fence early.
+export const SYNC_PREAPPROVAL = 'This is an unattended headless run: AskUserQuestion is unavailable, so do not ask anything and do not wait for an answer — a question ends the run without syncing. The time and token cost of a full high-fidelity import is already acknowledged and accepted, so skip the proceed confirmation and continue. Creating a new pinned claude.ai project is pre-approved when this package has no existing .design-sync pin: pick a non-colliding name yourself, call create_project without confirming the name first, and continue through the upload without further approval.';
+export const SYNC_ARGS = ['-p', `/design-sync ${SYNC_PREAPPROVAL}`, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
 
 const PROJECT_URL_RE = /https?:\/\/claude\.ai\/design\/p\/([0-9a-zA-Z-]{20,})/;
 // `/design-sync` writes the system name in prose, either right after the project link

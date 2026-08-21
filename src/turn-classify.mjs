@@ -7,6 +7,9 @@ export function classifyTurnRequest(url) {
   if (path.endsWith('/Chat')) return 'chat';
   if (path.endsWith('/RenewTurn')) return 'renew';
   if (path.endsWith('/ReleaseTurn')) return 'release';
+  // Not part of a turn, but it races one: the composer's design-system picker persists every click
+  // through this RPC, and the prompt must not be submitted before those responses land.
+  if (path.endsWith('/UpdateProjectDesignSystems')) return 'design-system';
   return 'other';
 }
 

@@ -19,7 +19,9 @@ function errorMessage(error) {
 
 function tmpPath(outFile, attemptNumber) {
   invocationCounter += 1;
-  return `${outFile}.tmp-${process.pid}-${invocationCounter}-${attemptNumber}`;
+  const extension = path.extname(outFile);
+  const stem = extension ? outFile.slice(0, -extension.length) : outFile;
+  return `${stem}.tmp-${process.pid}-${invocationCounter}-${attemptNumber}${extension || '.png'}`;
 }
 
 function removeTmp(filePath) {
@@ -88,7 +90,7 @@ function assertRunning(state) {
 
 function screenshotOptions(filePath, plan) {
   if (plan.fullPage) return { path: filePath, fullPage: true };
-  return { path: filePath, fullPage: false, clip: plan.clip };
+  return { path: filePath, fullPage: true, clip: plan.clip };
 }
 
 async function waitForFonts(page, timeoutMs) {

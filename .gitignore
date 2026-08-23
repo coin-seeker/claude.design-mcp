@@ -10,6 +10,7 @@ designs/
 pulled/
 *.zip
 *.png
+!test/fixtures/preview-woorikan-like/img/dot.png
 
 # macOS
 .DS_Store

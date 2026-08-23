@@ -7,7 +7,12 @@ export function rpcTimeoutMs(fallbackMs) {
   return Number.isFinite(raw) && raw > 0 ? raw : fallbackMs;
 }
 
-export function buildOmeletteExpression(method, body = {}, org = null) {
+export function buildOmeletteExpression(method, body = {}, org = null, options = {}) {
+  const configuredTimeoutMs = rpcTimeoutMs(DEFAULT_RPC_TIMEOUT_MS);
+  const requestedTimeoutMs = Number(options.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > 0
+    ? Math.floor(requestedTimeoutMs)
+    : configuredTimeoutMs;
   return `(async () => {
     const base = ${JSON.stringify(OMELETTE_BASE)};
     const method = ${JSON.stringify(method)};
@@ -16,7 +21,7 @@ export function buildOmeletteExpression(method, body = {}, org = null) {
     if (org) headers['x-organization-uuid'] = org;
     let response;
     try {
-      response = await fetch(base + '/' + method, { method: 'POST', headers, credentials: 'include', body: JSON.stringify(${JSON.stringify(body || {})}), signal: AbortSignal.timeout(${rpcTimeoutMs(DEFAULT_RPC_TIMEOUT_MS)}) });
+      response = await fetch(base + '/' + method, { method: 'POST', headers, credentials: 'include', body: JSON.stringify(${JSON.stringify(body || {})}), signal: AbortSignal.timeout(${timeoutMs}) });
     } catch (error) {
       if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) throw new Error('RPC timed out: ' + method);
       throw error;
@@ -47,8 +52,8 @@ export function downloadZipExpression(projectId) {
   })()`;
 }
 
-export async function omelette(page, method, body = {}, org = null) {
-  const r = await page.evaluate(buildOmeletteExpression(method, body, org));
+export async function omelette(page, method, body = {}, org = null, options = {}) {
+  const r = await page.evaluate(buildOmeletteExpression(method, body, org, options));
   if (r?.__status) throw new Error(method + ' HTTP ' + r.__status + ': ' + String(r.__text || '').slice(0, 200));
   return r;
 }

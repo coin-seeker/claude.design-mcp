@@ -1,6 +1,9 @@
 # dependencies
 node_modules/
 
+# local agent work artifacts
+.omo/
+
 # dedicated Chrome login profile (cookies / session) — NEVER commit
 chrome-profile/
 .chrome-profile/

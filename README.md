@@ -33,8 +33,7 @@ needed to receive the generated files.
 The MCP protocol revision discussed around 2026-07-28, including the stateless wire-protocol
 change adopted by some MCP ecosystems, has no practical effect on the current OpenCode stdio
 client integration or tool contract. This server responds to initialization with the fixed
-`protocolVersion: "2024-11-05"` handshake. On 2026-08-12, the unchanged existing test suite,
-including `node test/mcp.test.mjs`, passed against the unmodified source and test files.
+`protocolVersion: "2024-11-05"` handshake.
 
 Re-review this verdict if any of these conditions occurs:
 

@@ -3,6 +3,7 @@ node_modules/
 
 # local agent work artifacts
 .omo/
+test/
 
 # dedicated Chrome login profile (cookies / session) — NEVER commit
 chrome-profile/
@@ -13,7 +14,6 @@ designs/
 pulled/
 *.zip
 *.png
-!test/fixtures/preview-woorikan-like/img/dot.png
 
 # macOS
 .DS_Store

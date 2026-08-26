@@ -83,12 +83,22 @@ export function designSystemLabel(text) {
 }
 
 export function matchDesignSystem(options, requested) {
-  const target = String(requested).normalize('NFC').trim().toLowerCase();
+  const canonical = String(requested).normalize('NFC').trim();
+  const target = canonical.toLowerCase();
   const key = (option) => option.name.normalize('NFC').toLowerCase();
   const exact = options.find((option) => key(option) === target);
   if (exact) return exact;
+  // claude.ai row textContent can glue a subtitle straight onto the name (measured 2026-08-26:
+  // "theddari Design SystemPretendard · 1 template"), which defeats the exact comparison above and
+  // used to leak the glued text into selected.name — the trigger proof and the caller echo then
+  // waited on a label the app never renders. A row whose text STARTS WITH the requested name is that
+  // system; return the caller's clean canonical name so the trigger proof, the composer-attachment
+  // poll, and the echo all use it.
+  const prefixed = options.filter((option) => key(option).startsWith(target));
+  if (prefixed.length === 1) return { ...prefixed[0], name: canonical };
+  if (prefixed.length > 1) throw new Error(`Design system "${requested}" is ambiguous. Matches: ${prefixed.map((option) => option.name).join(', ')}`);
   const partial = options.filter((option) => key(option).includes(target));
-  if (partial.length === 1) return partial[0];
+  if (partial.length === 1) return { ...partial[0], name: canonical };
   if (partial.length > 1) throw new Error(`Design system "${requested}" is ambiguous. Matches: ${partial.map((option) => option.name).join(', ')}`);
   throw new Error(`Design system "${requested}" not found. Available: ${options.map((option) => option.name).join(', ')}`);
 }

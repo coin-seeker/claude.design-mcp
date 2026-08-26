@@ -162,7 +162,10 @@ export async function ensureSession({ visible = false, force = false, fetchImpl 
   try {
     if (!await chromeVersion(port, fetchImpl)) await launchChrome({ visible, fetchImpl });
     const cdpUrl = `http://127.0.0.1:${port}`;
-    const browser = connect ? await connect(cdpUrl) : await chromium.connectOverCDP(cdpUrl);
+    const connectOptions = { noDefaults: true };
+    const browser = connect
+      ? await connect(cdpUrl, connectOptions)
+      : await chromium.connectOverCDP(cdpUrl, connectOptions);
     const page = await pageFromBrowser(browser);
     const ready = await waitForReady(page);
     cachedSession = { browser, page, org: ready.org, me: ready.me };

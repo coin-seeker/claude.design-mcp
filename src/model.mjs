@@ -26,11 +26,11 @@ export function parseModelRequest(input) {
 }
 
 export function resolveOptionalModel(model) {
-  return model ? parseModelRequest(model) : parseModelRequest('opus-5');
+  return model ? parseModelRequest(model) : parseModelRequest('opus-5.5');
 }
 
 export function resolveEffort(request, effort) {
-  return effort ?? (request.family === 'opus' ? 'high' : null);
+  return effort ?? (request.family === 'opus' ? 'xhigh' : null);
 }
 
 export function matchEffortOption(labels, effort) {

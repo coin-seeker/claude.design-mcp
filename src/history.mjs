@@ -92,6 +92,8 @@ function summarizeResult(result) {
   if (status !== null) summary.status = status;
   if (Array.isArray(result.files)) summary.files = result.files.length;
   if (Array.isArray(result.errors)) summary.errors = result.errors.length;
+  if (typeof result.signature === 'string') summary.signature = result.signature;
+  if (typeof result.remoteUpdatedAt === 'string') summary.remoteUpdatedAt = result.remoteUpdatedAt;
   if (typeof result.timedOut === 'boolean') summary.timedOut = result.timedOut;
   const url = text(result.url);
   if (url !== null) summary.url = url;

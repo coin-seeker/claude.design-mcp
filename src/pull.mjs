@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { decodeProjectData, decodeToBuffer, expandHome, fileEntriesOf, sanitizeName, sanitizeRelPath } from './helpers.mjs';
 import { downloadZipExpression, omelette } from './rpc.mjs';
+import { fileSignature, remoteUpdatedAtOf } from './signature.mjs';
 
 export const DEFAULT_OUT = process.env.CLAUDE_DESIGN_DIR || process.cwd();
 const PULL_CONCURRENCY = 4;
@@ -129,7 +130,7 @@ export async function pullProject(session, projectOrId, outDir = DEFAULT_OUT, { 
     await mkdir(baseDir, { recursive: true });
     const file = path.join(baseDir, `${safeName}.zip`);
     await writeFile(file, bytes);
-    return { project, dir: baseDir, files: [{ path: file, bytes: bytes.length }] };
+    return { project, dir: baseDir, files: [{ path: file, bytes: bytes.length }], signature: null };
   }
   const root = path.join(baseDir, safeName).normalize('NFC');
   await mkdir(root, { recursive: true });
@@ -145,6 +146,8 @@ export async function pullProject(session, projectOrId, outDir = DEFAULT_OUT, { 
     project,
     dir: root,
     files,
+    signature: fileSignature(entries),
+    remoteUpdatedAt: remoteUpdatedAtOf(entries),
     ...(errors.length ? { errors } : {}),
     ...(thumb ? { thumbnail: path.join(root, thumb.path).normalize('NFC') } : {}),
   };

@@ -30,13 +30,18 @@ export function generatedFileEntries(entries) {
   return (Array.isArray(entries) ? entries : []).filter((entry) => !/^_ds(?:\/|$)/.test(String(entry?.path || '')));
 }
 
-export function lastMessageRoleOf(raw) {
-  const data = raw?.data
-    ? JSON.parse(Buffer.from(String(raw.data), 'base64').toString('utf8'))
-    : raw;
+export function decodeProjectData(raw) {
+  return raw?.data ? JSON.parse(decodeToBuffer(raw.data).toString('utf8')) : raw;
+}
+
+export function lastMessageOf(data) {
   const chats = Object.values(data?.chats || {});
   const messages = chats.flatMap((chat) => Array.isArray(chat.messages) ? chat.messages : []);
-  const role = messages.at(-1)?.role;
+  return messages.at(-1) ?? null;
+}
+
+export function lastMessageRoleOf(raw) {
+  const role = lastMessageOf(decodeProjectData(raw))?.role;
   return role === 'assistant' || role === 'user' ? role : null;
 }
 

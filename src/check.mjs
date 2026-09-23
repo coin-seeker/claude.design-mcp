@@ -13,6 +13,12 @@ const POLL_CYCLES = 3;
 const MAX_RESUME_ATTEMPTS = 3;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const resumeAttempts = new Map();
+export function classifyPollStatus({ history, files, lastMessageRole, isHeld, cycles = POLL_CYCLES }) {
+  const stable = signatureStable(history, cycles);
+  return !stable ? 'generating'
+    : files.length === 0 ? lastMessageRole === 'user' ? isHeld ? 'generating' : 'stalled' : 'no_output'
+      : lastMessageRole === 'assistant' ? 'done' : 'generating';
+}
 async function questionFormVisible(page) {
   const continueButton = page.locator('button:has-text("Continue")').first();
   return (await continueButton.count()) > 0 && await continueButton.isVisible();
@@ -181,14 +187,7 @@ export async function checkDesign(session, projectId, deps = {}) {
     history.push(stabilitySignature(files));
   }
   const lastMessageRole = await getLastMessageRole();
-  const stable = signatureStable(history, POLL_CYCLES);
-  const status = !stable
-    ? 'generating'
-    : files.length === 0
-      ? lastMessageRole === 'user' ? isHeldPage(session.page) ? 'generating' : 'stalled' : 'no_output'
-      : lastMessageRole === 'assistant'
-        ? 'done'
-        : 'generating';
+  const status = classifyPollStatus({ history, files, lastMessageRole, isHeld: isHeldPage(session.page) });
 
   return { projectId, status, files, lastMessageRole, answeredQuestions: false };
 }

@@ -2,12 +2,13 @@ import { decodeProjectData, decodeToBuffer, sanitizeName } from './helpers.mjs';
 import { applyEffortToPage, applyModelToPage, resolveEffort, resolveOptionalModel, withResolvedModel } from './model.mjs';
 import { applyDesignSystem, assertDesignSystemChoice, designSystemChoiceEcho, designSystemHook } from './design-system.mjs';
 import { checkDesign } from './check.mjs';
+import { checkDesignRpc } from './check-rpc.mjs';
 import { listDesignSystems } from './list-systems.mjs';
 import { previewProject } from './preview.mjs';
 import { editProjectFile, getProjectFile, isTextProjectFile } from './project-file.mjs';
 import { listAllFiles, listProjects, pullProject, resolveProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
-import { awaitDesignReady, ensureSession, loginHelp, withOperationPage, withProjectOperationPage, withRpcPage } from './session.mjs';
+import { awaitDesignReady, ensureSession, hasHeldProjectPage, loginHelp, withOperationPage, withProjectOperationPage, withRpcPage } from './session.mjs';
 import { runDesignSync } from './sync.mjs';
 import { runGenerateTurn } from './turn.mjs';
 import { generateVariants } from './variants.mjs';
@@ -179,10 +180,17 @@ async function design_status(args = {}, overrides = {}) {
   });
 }
 
-async function design_check(args = {}) {
+async function design_check(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, withProjectOperationPage, hasHeldProjectPage, checkDesign, checkDesignRpc, ...overrides };
   const projectId = requireString(args.projectId, 'projectId');
-  const session = await ensureSession({ visible: false });
-  return withProjectOperationPage(session, projectId, (page) => checkDesign({ ...session, page }, projectId));
+  const session = await deps.ensureSession({ visible: false });
+  const uiCheck = async (checkPath) => ({
+    ...await deps.withProjectOperationPage(session, projectId, (page) => deps.checkDesign({ ...session, page }, projectId)),
+    checkPath,
+  });
+  if (deps.hasHeldProjectPage(projectId)) return uiCheck('held');
+  const result = await deps.withRpcPage(session, (page) => deps.checkDesignRpc({ ...session, page }, projectId));
+  return result.fallback ? uiCheck('ui') : result;
 }
 
 async function design_edit(args = {}, overrides = {}) {

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { decodeToBuffer, expandHome, fileEntriesOf, sanitizeName, sanitizeRelPath } from './helpers.mjs';
+import { decodeProjectData, decodeToBuffer, expandHome, fileEntriesOf, sanitizeName, sanitizeRelPath } from './helpers.mjs';
 import { downloadZipExpression, omelette } from './rpc.mjs';
 
 export const DEFAULT_OUT = process.env.CLAUDE_DESIGN_DIR || process.cwd();
@@ -35,11 +35,12 @@ function projectView(project) {
     isOwned: project.isOwned,
     createdAt: project.createdAt ?? project.created_at,
     updatedAt: project.updatedAt ?? project.updated_at,
+    viewedAt: project.viewedAt,
   };
 }
 
 function recencyKey(project) {
-  const value = project?.updatedAt ?? project?.createdAt ?? 0;
+  const value = project?.updatedAt ?? project?.viewedAt ?? project?.createdAt ?? 0;
   const ms = typeof value === 'number' ? value : Date.parse(value);
   return Number.isFinite(ms) ? ms : 0;
 }
@@ -48,11 +49,32 @@ async function callOmelette(session, method, body = {}) {
   return omelette(session.page, method, body, session.org);
 }
 
-export async function listProjects(session, { refresh = false } = {}) {
+export async function readAllProjectItems(session, call = omelette) {
+  const items = [];
+  let cursor;
+  for (let visited = 0; visited < 50; visited += 1) {
+    const page = await call(session.page, 'ListProjects', cursor ? { cursor } : {}, session.org);
+    const current = Array.isArray(page?.items) ? page.items : [];
+    items.push(...current);
+    cursor = page?.cursor;
+    if (!cursor || !current.length) break;
+  }
+  return items;
+}
+
+export async function listProjects(session, { refresh = false } = {}, call = omelette) {
   if (session.projects && !refresh) return session.projects;
-  const data = await callOmelette(session, 'ListProjects', {});
-  session.projects = (Array.isArray(data.items) ? data.items : []).map(projectView);
+  session.projects = (await readAllProjectItems(session, call)).map(projectView);
   return session.projects;
+}
+
+export async function resolveProject(session, { projectId, name }, call = omelette) {
+  const projects = await listProjects(session, {}, call);
+  if (!projectId) return selectProject(projects, { name });
+  const listed = projects.find((project) => project.projectId === projectId);
+  if (listed) return listed;
+  const data = decodeProjectData(await call(session.page, 'GetProjectData', { projectId }, session.org));
+  return { projectId, name: data?.name || projectId, type: 'PROJECT_TYPE_PROJECT' };
 }
 
 export function selectProject(projects, { projectId, name }) {
@@ -98,8 +120,8 @@ async function writeRemoteFile(session, projectId, entry, root) {
   }
 }
 
-export async function pullProject(session, projectId, outDir = DEFAULT_OUT, { zip = false } = {}) {
-  const project = selectProject(await listProjects(session), { projectId });
+export async function pullProject(session, projectOrId, outDir = DEFAULT_OUT, { zip = false } = {}) {
+  const project = typeof projectOrId === 'object' ? projectOrId : await resolveProject(session, { projectId: projectOrId });
   const baseDir = path.resolve(expandHome(outDir || DEFAULT_OUT));
   const safeName = sanitizeName(project.name);
   if (zip) {

@@ -12,7 +12,7 @@ import {
 } from './preview-assets.mjs';
 import { renderProjectToPng } from './preview-render.mjs';
 import { omelette } from './rpc.mjs';
-import { chromeBin, getConnectedBrowser } from './session.mjs';
+import { chromeBin } from './session.mjs';
 
 export { renderProjectToPng } from './preview-render.mjs';
 
@@ -130,7 +130,7 @@ function combinedRenderError(firstError, secondError) {
 
 async function renderWithRetry(assets, targetPath, outFile, options, deps, dl) {
   const render = deps.render || renderProjectToPng;
-  const sessionBrowser = deps.sessionBrowser !== undefined ? deps.sessionBrowser : getConnectedBrowser();
+  const sessionBrowser = deps.sessionBrowser !== undefined ? deps.sessionBrowser : null;
   if (!sessionBrowser) {
     assertDeadline(dl);
     return invokeRender(

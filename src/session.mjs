@@ -163,14 +163,6 @@ export async function pageFromBrowser(browser, deps = { createPage: createBackgr
 
 let cachedSession = null;
 
-// Expose the already-connected CDP browser (if any) so other modules (e.g. preview)
-// can open a throwaway page on it instead of launching a separate headless Chrome.
-export function getConnectedBrowser() {
-  const browser = cachedSession?.browser;
-  if (!browser) return null;
-  return browser.isConnected?.() === false ? null : browser;
-}
-
 function sessionAlive(session) {
   return session.browser.isConnected?.() !== false && session.page.isClosed?.() !== true;
 }

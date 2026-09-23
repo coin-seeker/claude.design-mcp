@@ -1,5 +1,5 @@
 import { omelette } from './rpc.mjs';
-import { ensureSession, withOperationPage } from './session.mjs';
+import { ensureSession, withRpcPage } from './session.mjs';
 
 export function isTextProjectFile(contentType, filePath) {
   return /^text\//i.test(contentType) || /(?:json|javascript|xml|svg|html|css)$/i.test(contentType) || /\.(?:txt|md|json|js|jsx|ts|tsx|css|html|svg)$/i.test(filePath);
@@ -15,7 +15,7 @@ export async function editProjectFile(scoped, projectId, filePath, edits, call =
 
 export async function writeProjectTextFile({ projectId, path: filePath, content }, deps = {}) {
   const openSession = deps.ensureSession || ensureSession;
-  const onPage = deps.withOperationPage || withOperationPage;
+  const onPage = deps.withRpcPage || withRpcPage;
   const call = deps.omelette || omelette;
   const session = await openSession({ visible: false });
   return onPage(session, (page) => call(page, 'WriteFiles', {

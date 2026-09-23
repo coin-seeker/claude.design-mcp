@@ -1,13 +1,13 @@
-import { decodeToBuffer, sanitizeName } from './helpers.mjs';
+import { decodeProjectData, decodeToBuffer, sanitizeName } from './helpers.mjs';
 import { applyEffortToPage, applyModelToPage, resolveEffort, resolveOptionalModel, withResolvedModel } from './model.mjs';
 import { applyDesignSystem, assertDesignSystemChoice, designSystemChoiceEcho, designSystemHook } from './design-system.mjs';
 import { checkDesign } from './check.mjs';
 import { listDesignSystems } from './list-systems.mjs';
 import { previewProject } from './preview.mjs';
 import { editProjectFile, getProjectFile, isTextProjectFile } from './project-file.mjs';
-import { listAllFiles, listProjects, pullProject, selectProject, deleteProject } from './pull.mjs';
+import { listAllFiles, listProjects, pullProject, resolveProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
-import { awaitDesignReady, ensureSession, loginHelp, withOperationPage, withProjectOperationPage } from './session.mjs';
+import { awaitDesignReady, ensureSession, loginHelp, withOperationPage, withProjectOperationPage, withRpcPage } from './session.mjs';
 import { runDesignSync } from './sync.mjs';
 import { runGenerateTurn } from './turn.mjs';
 import { generateVariants } from './variants.mjs';
@@ -56,9 +56,11 @@ async function design_login() {
   }
   throw last || new Error(loginHelp('login did not complete before timeout'));
 }
-async function design_list() {
-  const session = await ensureSession({ visible: false });
-  return withOperationPage(session, (page) => listProjects({ ...session, page }, { refresh: true }));
+const READ_DEPS = { ensureSession, withRpcPage, resolveProject, listProjects, pullProject, getProjectFile, editProjectFile, deleteProject, previewProject, omelette };
+async function design_list(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, ...overrides };
+  const session = await deps.ensureSession({ visible: false });
+  return deps.withRpcPage(session, (page) => deps.listProjects({ ...session, page }, { refresh: true }));
 }
 function recencyKey(project) {
   const value = project?.updatedAt ?? project?.createdAt ?? 0;
@@ -140,20 +142,22 @@ export async function design_iterate(args = {}, overrides = {}) {
     return withResolvedGeneration(wait ? { ...result, files: await deps.listAllFiles(scoped, projectId) } : result, selectedModel, selectedEffort);
   });
 }
-async function design_pull(args = {}) {
-  const session = await ensureSession({ visible: false });
-  return withOperationPage(session, async (page) => {
+async function design_pull(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, ...overrides };
+  const session = await deps.ensureSession({ visible: false });
+  return deps.withRpcPage(session, async (page) => {
     const scoped = { ...session, page };
-    const project = selectProject(await listProjects(scoped), { projectId: args.projectId, name: args.name });
-    return pullProject(scoped, project.projectId, args.dir, { zip: Boolean(args.zip) });
+    const project = await deps.resolveProject(scoped, { projectId: args.projectId, name: args.name });
+    return deps.pullProject(scoped, project, args.dir, { zip: Boolean(args.zip) });
   });
 }
-async function design_get(args = {}) {
+async function design_get(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, ...overrides };
   const projectId = requireString(args.projectId, 'projectId');
   const filePath = requireString(args.path, 'path');
-  const session = await ensureSession({ visible: false });
-  return withOperationPage(session, async (page) => {
-    const file = await getProjectFile({ ...session, page }, projectId, filePath);
+  const session = await deps.ensureSession({ visible: false });
+  return deps.withRpcPage(session, async (page) => {
+    const file = await deps.getProjectFile({ ...session, page }, projectId, filePath);
     const bytes = decodeToBuffer(file.content || '');
     const contentType = String(file.contentType || 'application/octet-stream');
     if (isTextProjectFile(contentType, filePath)) return { projectId, path: filePath, contentType, version: file.version, text: bytes.toString('utf8') };
@@ -161,17 +165,13 @@ async function design_get(args = {}) {
   });
 }
 
-function parseProjectData(data) {
-  if (!data?.data) return {};
-  return JSON.parse(decodeToBuffer(data.data).toString('utf8'));
-}
-
-async function design_status(args = {}) {
+async function design_status(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, ...overrides };
   const projectId = requireString(args.projectId, 'projectId');
-  const session = await ensureSession({ visible: false });
-  return withOperationPage(session, async (page) => {
-    const raw = await omelette(page, 'GetProjectData', { projectId }, session.org);
-    const data = parseProjectData(raw);
+  const session = await deps.ensureSession({ visible: false });
+  return deps.withRpcPage(session, async (page) => {
+    const raw = await deps.omelette(page, 'GetProjectData', { projectId }, session.org);
+    const data = decodeProjectData(raw);
     const chats = Object.values(data.chats || {});
     const messages = chats.flatMap((chat) => Array.isArray(chat.messages) ? chat.messages : []);
     const last = messages.at(-1) || null;
@@ -185,31 +185,31 @@ async function design_check(args = {}) {
   return withProjectOperationPage(session, projectId, (page) => checkDesign({ ...session, page }, projectId));
 }
 
-async function design_edit(args = {}) {
+async function design_edit(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, ...overrides };
   const projectId = requireString(args.projectId, 'projectId');
   const filePath = requireString(args.path, 'path');
   if (!Array.isArray(args.edits)) throw new Error('edits must be an array');
-  const session = await ensureSession({ visible: false });
-  return withOperationPage(session, (page) => editProjectFile({ ...session, page }, projectId, filePath, args.edits));
+  const session = await deps.ensureSession({ visible: false });
+  return deps.withRpcPage(session, (page) => deps.editProjectFile({ ...session, page }, projectId, filePath, args.edits));
 }
 
 // Deletion is irreversible, so it stays behind an explicit confirm flag the caller must opt into.
-export async function design_delete(args = {}, deps = {}) {
+export async function design_delete(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, ...overrides };
   if (args.confirm !== true) throw new Error('design_delete requires confirm: true. Only call this when the user explicitly asked to delete the project.');
-  const openSession = deps.ensureSession || ensureSession;
-  const onPage = deps.withOperationPage || withOperationPage;
-  const remove = deps.deleteProject || deleteProject;
-  const session = await openSession({ visible: false });
+  const session = await deps.ensureSession({ visible: false });
   const projectId = requireString(args.projectId, 'projectId');
-  return onPage(session, (page) => remove({ ...session, page }, projectId));
+  return deps.withRpcPage(session, (page) => deps.deleteProject({ ...session, page }, projectId));
 }
 
-async function design_preview(args = {}) {
-  const session = await ensureSession({ visible: false });
-  return withOperationPage(session, async (page) => {
+async function design_preview(args = {}, overrides = {}) {
+  const deps = { ...READ_DEPS, ...overrides };
+  const session = await deps.ensureSession({ visible: false });
+  return deps.withRpcPage(session, async (page) => {
     const scoped = { ...session, page };
-    const project = selectProject(await listProjects(scoped), { projectId: args.projectId, name: args.name });
-    return previewProject(scoped, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height, projectName: project.name });
+    const project = await deps.resolveProject(scoped, { projectId: args.projectId, name: args.name });
+    return deps.previewProject(scoped, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height, projectName: project.name });
   });
 }
 

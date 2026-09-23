@@ -16,6 +16,8 @@ claude.ai/design generates **on your own account** (not a local imitation).
 - Project metadata, files, deletes, and direct file edits use the documented JSON RPCs
   (`CreateProject` / `ListFiles` / `GetFile` / `EditFile` / `DeleteProject`),
   run in-page so they share your session + Cloudflare clearance.
+- Focus-free reads use an existing claude.ai page without navigating or focusing it. If none
+  exists, CDP creates one background target; subsequent reads reuse that target.
 - **Not a `claude -p` mimic.** Every design is produced by claude.ai/design itself.
 
 ## Official Design MCP and protocol verdict (2026-08-12)
@@ -48,7 +50,7 @@ Re-review this verdict if any of these conditions occurs:
 | Tool | Does |
 |------|------|
 | `design_login` | One-time: open Chrome to log into claude.ai/design (session persists) |
-| `design_list` | List your claude.ai/design projects |
+| `design_list` | List your claude.ai/design projects; `details?: true` includes file count, remote update time and signature |
 | `design_create` | Create a project and generate a design from a prompt — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `name?`, `wait?`, `model?`, `fresh?` |
 | `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `count?`, `axis?`, `name?`, `preview?`, `model?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?`, `designSystem?` |
@@ -56,7 +58,7 @@ Re-review this verdict if any of these conditions occurs:
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
-| `design_check` | Poll and recover an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, `no_output`, `interrupted`, `stalled`, or `resume_exhausted` |
+| `design_check` | Poll and recover an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, `no_output`, `interrupted`, `stalled`, or `resume_exhausted`, plus `checkPath` (`held`, `rpc`, `ui`) |
 | `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 | `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
@@ -73,7 +75,7 @@ Every `tools/call` dispatch appends exactly one JSON line to
 override the folder with `CLAUDE_DESIGN_HISTORY_DIR`), so a prompt history survives across MCP restarts.
 A line carries `v`, `eventId`, `seq`, `ts`, `tool`, `durationMs`, `ok`, `error`, `projectId`, `projects`,
 `projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `withoutDesignSystem`,
-`withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, and a whitelisted `result` summary (counts and ids only — **never** file
+`withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, and a whitelisted `result` summary (counts, ids, file signature, and remote update time only — **never** file
 contents, base64, or environment values). Recording is best-effort observability: a failed write only warns
 on stderr and never turns a working tool call into an error. The CLI path is not recorded.
 
@@ -91,6 +93,23 @@ failures are non-fatal in the same way: `revision: null` plus an stderr warning,
 
 ## Setup
 
+### Focus-free reads
+
+`design_list`, `design_pull`, `design_get`, `design_status`, `design_preview`, and
+`design_system_list` run RPCs without opening, focusing, or navigating a visible tab.
+`design_edit` and `design_delete` also use focus-free RPC but **change remote data**.
+`design_preview` renders with a separate headless browser by default. `design_check`
+first checks through RPC; held generation pages and UI-only questions/interruptions
+continue through the project page. Generation (`design_create`, `design_iterate`) still
+uses its composer operation page.
+
+### `design_list` details
+
+Pass `{ "details": true }` (CLI: `list --details`) to receive `fileCount`,
+`remoteUpdatedAt`, and `signature` for each ordinary project. Design systems do not
+have these file stats. The signature is SHA-256 over sorted `path:version` pairs for
+all files; it matches the signature on a non-zip `design_pull` result.
+
 ```bash
 npm install                  # installs playwright-core (NO browser download — uses your Chrome)
 node src/server.mjs login    # opens Chrome once; log into claude.ai (session is then reused, invisibly)
@@ -107,6 +126,7 @@ Register as a local MCP (opencode example):
 ```bash
 node src/server.mjs login
 node src/server.mjs list
+node src/server.mjs list --details
 node src/server.mjs list-systems
 node src/server.mjs create "simple pricing card" pricing --design-system "Frontend Design System"
 node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus --without-design-system
@@ -118,8 +138,8 @@ node src/server.mjs delete <projectId>
 node src/server.mjs sync <packageDir> [--timeout-ms 900000]
 ```
 
-After the one-time `login`, `list`/`create`/`iterate`/`pull` run with **no visible window**
-(off-screen Chrome) and reuse the persisted session.
+After the one-time `login`, reads reuse the Chrome session without changing the
+frontmost tab. Generation still uses its composer page.
 
 ## Generation options
 

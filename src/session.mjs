@@ -6,7 +6,7 @@ import { chromium as playwrightChromium } from 'playwright-core';
 import { expandHome } from './helpers.mjs';
 import { cookieOrgExpression, omelette } from './rpc.mjs';
 
-export { holdOperationPage, isHeldOperationPage, withOperationPage, withProjectOperationPage } from './operation-pages.mjs';
+export { holdOperationPage, isHeldOperationPage, withOperationPage, withProjectOperationPage, withRpcPage, hasHeldProjectPage } from './operation-pages.mjs';
 
 const DEFAULT_PROFILE = '~/.cache/claude-design-mcp/chrome-profile';
 const DEFAULT_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -126,17 +126,39 @@ async function waitForReady(page, timeoutMs = readyTimeout()) {
   }
 }
 
-async function pageFromBrowser(browser) {
-  const context = browser.contexts()[0] || (await browser.newContext());
-  const pages = context.pages();
-  const existing = pages.find((page) => String(page.url()).includes('claude.ai'));
-  if (existing) {
-    if (!String(existing.url()).includes('/design')) await existing.goto(DESIGN_URL, { waitUntil: 'domcontentloaded' });
-    return existing;
+export async function createBackgroundDesignPage(browser, { timeoutMs = 15_000 } = {}) {
+  const cdp = await browser.newBrowserCDPSession();
+  let targetId;
+  try {
+    ({ targetId } = await cdp.send('Target.createTarget', { url: DESIGN_URL, background: true }));
+  } finally {
+    await cdp.detach();
   }
-  const page = await context.newPage();
-  await page.goto(DESIGN_URL, { waitUntil: 'domcontentloaded' });
-  return page;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const page of browser.contexts()[0]?.pages() ?? []) {
+      const probe = await page.context().newCDPSession(page);
+      try {
+        const info = await probe.send('Target.getTargetInfo');
+        if (info.targetInfo.targetId === targetId) {
+          await page.waitForLoadState('domcontentloaded');
+          return page;
+        }
+      } finally {
+        await probe.detach();
+      }
+    }
+    await delay(100);
+  }
+  throw new SessionStartError(`Background Claude Design target ${targetId} did not attach`);
+}
+
+export async function pageFromBrowser(browser, deps = { createPage: createBackgroundDesignPage }) {
+  const existing = browser.contexts().flatMap((context) => context.pages()).find((page) => {
+    try { return !page.isClosed?.() && new URL(page.url()).origin === 'https://claude.ai'; }
+    catch { return false; }
+  });
+  return existing ?? deps.createPage(browser);
 }
 
 let cachedSession = null;

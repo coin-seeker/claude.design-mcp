@@ -1,4 +1,5 @@
 import { closePage, logEvent, pageIdentity } from './log.mjs';
+import { createBackgroundDesignPage } from './session.mjs';
 
 const DESIGN_URL = 'https://claude.ai/design';
 const OPERATION_PAGE_LEASE_MS = 45 * 60_000;
@@ -80,6 +81,38 @@ function heldProjectPage(projectId) {
   if (page.isClosed?.() !== true) return page;
   heldProjectPages.delete(key);
   return null;
+}
+
+export function hasHeldProjectPage(projectId) {
+  return heldProjectPage(projectId) !== null;
+}
+
+export function pickRpcPage(pages) {
+  return pages.filter((page) => {
+    if (page.isClosed?.()) return false;
+    try { return new URL(page.url()).origin === 'https://claude.ai'; }
+    catch { return false; }
+  }).sort((left, right) => {
+    const rank = (page) => {
+      const pathname = new URL(page.url()).pathname;
+      return pathname === '/design' ? 0 : pathname.startsWith('/design/p/') ? 2 : 1;
+    };
+    return rank(left) - rank(right);
+  })[0] ?? null;
+}
+
+export async function withRpcPage(session, fn, deps = { createPage: createBackgroundDesignPage }) {
+  const excluded = new Set();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const pages = [...new Set([session.page, ...(session.browser.contexts()[0]?.pages() ?? [])])].filter((page) => page && !excluded.has(page));
+    const page = pickRpcPage(pages) ?? await deps.createPage(session.browser);
+    session.page = page;
+    try { return await fn(page); }
+    catch (error) {
+      if (attempt || !/Execution context was destroyed|Target page, context or browser has been closed|Target closed|frame was detached|has been closed/i.test(String(error?.message ?? error))) throw error;
+      excluded.add(page);
+    }
+  }
 }
 
 export async function withOperationPage(session, fn) {

@@ -28,7 +28,7 @@ function createParallelPool(limit) {
   });
 }
 
-function projectView(project) {
+export function projectView(project) {
   return {
     projectId: project.projectId,
     name: project.name,
@@ -50,7 +50,9 @@ async function callOmelette(session, method, body = {}) {
   return omelette(session.page, method, body, session.org);
 }
 
-export async function readAllProjectItems(session, call = omelette) {
+// ListProjects answers 20 items per page (favourites first, then most recently viewed);
+// `limit` stops paging as soon as that many items are in hand.
+export async function readAllProjectItems(session, call = omelette, { limit } = {}) {
   const items = [];
   let cursor;
   for (let visited = 0; visited < 50; visited += 1) {
@@ -58,9 +60,9 @@ export async function readAllProjectItems(session, call = omelette) {
     const current = Array.isArray(page?.items) ? page.items : [];
     items.push(...current);
     cursor = page?.cursor;
-    if (!cursor || !current.length) break;
+    if (!cursor || !current.length || (limit && items.length >= limit)) break;
   }
-  return items;
+  return limit ? items.slice(0, limit) : items;
 }
 
 export async function listProjects(session, { refresh = false } = {}, call = omelette) {

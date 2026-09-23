@@ -110,6 +110,13 @@ Pass `{ "details": true }` (CLI: `list --details`) to receive `fileCount`,
 have these file stats. The signature is SHA-256 over sorted `path:version` pairs for
 all files; it matches the signature on a non-zip `design_pull` result.
 
+`{ "limit": 20 }` (CLI: `list --limit 20`) reads only the first N projects —
+`ListProjects` returns favourites first, then the most recently viewed — so a limit of
+20 costs one RPC. A limited read never replaces the cached full listing that
+`design_pull` uses. With `details: true`, `{ "detailsFor": ["<projectId>", ...] }`
+restricts the per-project `ListFiles` calls to those ids; other items come back
+without file stats.
+
 ```bash
 npm install                  # installs playwright-core (NO browser download — uses your Chrome)
 node src/server.mjs login    # opens Chrome once; log into claude.ai (session is then reused, invisibly)
@@ -127,6 +134,7 @@ Register as a local MCP (opencode example):
 node src/server.mjs login
 node src/server.mjs list
 node src/server.mjs list --details
+node src/server.mjs list --limit 20 --details
 node src/server.mjs list-systems
 node src/server.mjs create "simple pricing card" pricing --design-system "Frontend Design System"
 node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus --without-design-system

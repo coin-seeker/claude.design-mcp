@@ -4,6 +4,7 @@ import { applyDesignSystem, assertDesignSystemChoice, designSystemChoiceEcho, de
 import { checkDesign } from './check.mjs';
 import { checkDesignRpc } from './check-rpc.mjs';
 import { listDesignSystems } from './list-systems.mjs';
+import { withListDetails } from './list-details.mjs';
 import { previewProject } from './preview.mjs';
 import { editProjectFile, getProjectFile, isTextProjectFile } from './project-file.mjs';
 import { listAllFiles, listProjects, pullProject, resolveProject, deleteProject } from './pull.mjs';
@@ -21,7 +22,7 @@ const CALLER_PROPERTY = { caller: { type: 'object' } };
 const schema = (properties, required = []) => ({ type: 'object', properties: { ...properties, ...CALLER_PROPERTY }, required });
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
-  { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({}) },
+  { name: 'design_list', description: 'List Claude Design projects from the logged-in web account.', inputSchema: schema({ details: { type: 'boolean' } }) },
   { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. Grounding is mandatory: pass exactly one of designSystem (a name from design_system_list / list_claude_synced_systems) or withoutDesignSystem: true (optionally with withoutDesignSystemReason), never both, never neither. The call is refused before any browser or project is created.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' }, withoutDesignSystem: { type: 'boolean' }, withoutDesignSystemReason: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
   { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
@@ -61,7 +62,11 @@ const READ_DEPS = { ensureSession, withRpcPage, resolveProject, listProjects, pu
 async function design_list(args = {}, overrides = {}) {
   const deps = { ...READ_DEPS, ...overrides };
   const session = await deps.ensureSession({ visible: false });
-  return deps.withRpcPage(session, (page) => deps.listProjects({ ...session, page }, { refresh: true }));
+  return deps.withRpcPage(session, async (page) => {
+    const scoped = { ...session, page };
+    const projects = await deps.listProjects(scoped, { refresh: true });
+    return args.details === true ? withListDetails(scoped, projects, { listAllFiles: overrides.listAllFiles }) : projects;
+  });
 }
 function recencyKey(project) {
   const value = project?.updatedAt ?? project?.createdAt ?? 0;

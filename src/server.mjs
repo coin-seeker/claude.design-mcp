@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { parseCreateFlags, parseGenerateFlags, parseSyncFlags } from './cli.mjs';
+import { parseCreateFlags, parseGenerateFlags, parseListFlags, parseSyncFlags } from './cli.mjs';
 import { recordToolCall, snapshotForToolCall, splitCallerArgs } from './history.mjs';
 import { runDesignSync } from './sync.mjs';
 import { IMPL, TOOLS } from './tools.mjs';
@@ -124,7 +124,7 @@ async function runCli(argv) {
   const [cmd, ...rest] = argv;
   try {
     if (cmd === 'login') console.log(JSON.stringify(await IMPL.design_login({}), null, 2));
-    else if (cmd === 'list') console.log(JSON.stringify(await IMPL.design_list({}), null, 2));
+    else if (cmd === 'list') console.log(JSON.stringify(await IMPL.design_list(parseListFlags(rest).flags), null, 2));
     else if (cmd === 'list-systems') console.log(JSON.stringify(await IMPL.design_system_list({}), null, 2));
     else if (cmd === 'create') {
       const { positional, flags } = parseCreateFlags(rest);

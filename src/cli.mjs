@@ -15,6 +15,8 @@ const SYNC_FLAGS = {
   '--timeout-ms': { key: 'timeoutMs' },
 };
 
+const LIST_FLAGS = { '--details': { key: 'details', value: true } };
+
 export function parseFlags(args, definitions) {
   const positional = [];
   const flags = {};
@@ -47,4 +49,8 @@ export function parseGenerateFlags(args) {
 
 export function parseSyncFlags(args) {
   return parseFlags(args, SYNC_FLAGS);
+}
+
+export function parseListFlags(args) {
+  return parseFlags(args, LIST_FLAGS);
 }

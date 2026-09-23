@@ -5,6 +5,7 @@ const DESIGN_URL = 'https://claude.ai/design';
 const OPERATION_PAGE_LEASE_MS = 45 * 60_000;
 const heldOperationPages = new WeakMap();
 const heldProjectPages = new Map();
+const pendingRpcPages = new WeakMap();
 
 function leaseTimeout(ms) {
   let timer;
@@ -105,7 +106,15 @@ export async function withRpcPage(session, fn, deps = { createPage: createBackgr
   const excluded = new Set();
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const pages = [...new Set([session.page, ...(session.browser.contexts()[0]?.pages() ?? [])])].filter((page) => page && !excluded.has(page));
-    const page = pickRpcPage(pages) ?? await deps.createPage(session.browser);
+    let page = pickRpcPage(pages);
+    if (!page) {
+      let pending = pendingRpcPages.get(session.browser);
+      if (!pending) {
+        pending = Promise.resolve().then(() => deps.createPage(session.browser)).finally(() => pendingRpcPages.delete(session.browser));
+        pendingRpcPages.set(session.browser, pending);
+      }
+      page = await pending;
+    }
     session.page = page;
     try { return await fn(page); }
     catch (error) {

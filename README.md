@@ -156,9 +156,14 @@ frontmost tab. Generation still uses its composer page.
   version from the live claude.ai/design menu. Pin a version with forms such as
   `opus-5.5`, `opus-5`, `opus 5.0`, `claude-opus-5-5`, or
   `anthropic/claude-opus-5-5`. Without `model` the server defaults to `opus-5.5`
-  (opus family effort defaults to `xhigh`). New family versions become available automatically when
+  New family versions become available automatically when
   they appear in the site menu. If a requested version is unavailable, the error lists
   the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
+- `design_create` and `design_iterate` accept an optional `effort`: `low`, `medium`, `high`,
+  `extra`, or `max`, matching the composer's Effort menu (`xhigh` is an alias of `extra`).
+  Without `effort` every generation uses `extra`; if the composer does not offer it the result
+  reports `effort: "unavailable"`. An explicit `effort` the composer does not offer fails the call
+  before the prompt is sent, with the live options in the error. CLI: `--effort <value>`.
 - `design_create`, `design_iterate`, and `design_variants` accept a `designSystem`
   (CLI `--design-system`), the name of one of the account design systems reported by
   `design_system_list`. It is matched case-insensitively, an unambiguous partial name works,

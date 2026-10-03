@@ -29,13 +29,33 @@ export function resolveOptionalModel(model) {
   return model ? parseModelRequest(model) : parseModelRequest('opus-5.5');
 }
 
-export function resolveEffort(request, effort) {
-  return effort ?? (request.family === 'opus' ? 'xhigh' : null);
+// claude.ai/design labels its effort levels Low / Medium / High / Extra / Max.
+// API-style names (xhigh, extra-high) are aliases of the UI's "Extra".
+const EFFORT_ALIASES = new Map([
+  ['xhigh', 'extra'],
+  ['extrahigh', 'extra'],
+  ['maximum', 'max'],
+  ['med', 'medium'],
+]);
+export const DEFAULT_EFFORT = 'extra';
+
+export function normalizeEffort(value) {
+  const compact = String(value).trim().toLowerCase().replace(/[\s_-]+/g, '');
+  return EFFORT_ALIASES.get(compact) ?? compact;
+}
+
+export function resolveEffort(_request, effort) {
+  return effort ?? DEFAULT_EFFORT;
+}
+
+// textContent glues badges onto the label ("MediumRecommended"), so stop at the next capital.
+function effortLabelWord(label) {
+  return String(label).trim().match(/^[A-Za-z][a-z]*/)?.[0] ?? '';
 }
 
 export function matchEffortOption(labels, effort) {
-  const requested = String(effort).trim().toLowerCase();
-  const index = labels.findIndex((label) => String(label).trim().match(/^[a-z]+/i)?.[0].toLowerCase() === requested);
+  const requested = normalizeEffort(effort);
+  const index = labels.findIndex((label) => normalizeEffort(effortLabelWord(label)) === requested);
   return index < 0 ? null : { index, effort: requested };
 }
 
@@ -118,7 +138,9 @@ export async function applyModelToPage(page, request) {
   }
 }
 
-export async function applyEffortToPage(page, effort) {
+// required: the caller asked for this effort explicitly, so a miss must fail the turn before the
+// prompt is sent instead of silently generating at whatever effort the composer already had.
+export async function applyEffortToPage(page, effort, { required = false } = {}) {
   const modelButton = page.locator('button[title="Change model"]').first();
   try {
     await modelButton.waitFor({ state: 'visible', timeout: 5_000 });
@@ -130,17 +152,22 @@ export async function applyEffortToPage(page, effort) {
     const effortMenu = page.locator('[role="menu"][data-nested]').first();
     await effortMenu.waitFor({ state: 'visible', timeout: 3_000 });
     const menuItems = effortMenu.locator('[role="menuitemradio"]');
-    const selected = matchEffortOption(await menuItems.allTextContents(), effort);
-    if (!selected) throw new Error(`Effort "${effort}" not available`);
+    const labels = await menuItems.allTextContents();
+    const selected = matchEffortOption(labels, effort);
+    if (!selected) {
+      const available = labels.map(effortLabelWord).filter(Boolean).join(', ');
+      throw new Error(`Effort "${effort}" not available. Available efforts: ${available}`);
+    }
 
     await menuItems.nth(selected.index).click();
     await confirmSelection(page);
     await modelButton.filter({ hasText: selected.effort }).first()
       .waitFor({ state: 'visible', timeout: 10_000 });
     return selected.effort;
-  } catch {
+  } catch (error) {
     await page.keyboard.press('Escape').catch(() => {});
     await page.keyboard.press('Escape').catch(() => {});
+    if (required) throw error;
     return 'unavailable';
   }
 }

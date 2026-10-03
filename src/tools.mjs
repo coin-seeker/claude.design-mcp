@@ -19,12 +19,13 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Every tool takes an optional `caller` ({ directory, sessionID, agent, project? }): transport metadata the
 // client injects for the call history. The dispatcher strips it, so no handler ever receives it as an argument.
 const CALLER_PROPERTY = { caller: { type: 'object' } };
+const EFFORT_PROPERTY = { type: 'string', description: 'Composer effort: low | medium | high | extra | max (xhigh is an alias of extra). Defaults to extra. An explicit effort that the composer does not offer fails the call before the prompt is sent.' };
 const schema = (properties, required = []) => ({ type: 'object', properties: { ...properties, ...CALLER_PROPERTY }, required });
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab. Optional limit reads only the first N projects (ListProjects is ordered favourites first, then most recently viewed); with details:true, detailsFor restricts file stats to those projectIds.', inputSchema: schema({ details: { type: 'boolean' }, limit: { type: 'number' }, detailsFor: { type: 'array', items: { type: 'string' } } }) },
-  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. Grounding is mandatory: pass exactly one of designSystem (a name from design_system_list / list_claude_synced_systems) or withoutDesignSystem: true (optionally with withoutDesignSystemReason), never both, never neither. The call is refused before any browser or project is created.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' }, withoutDesignSystem: { type: 'boolean' }, withoutDesignSystemReason: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
-  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: { type: 'string' }, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
+  { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. Grounding is mandatory: pass exactly one of designSystem (a name from design_system_list / list_claude_synced_systems) or withoutDesignSystem: true (optionally with withoutDesignSystemReason), never both, never neither. The call is refused before any browser or project is created.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: EFFORT_PROPERTY, designSystem: { type: 'string' }, withoutDesignSystem: { type: 'boolean' }, withoutDesignSystemReason: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
+  { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: EFFORT_PROPERTY, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
   { name: 'design_preview', description: 'Render a project HTML with its project assets to a PNG for visual review; renders headless. Captures are capped at 20000px high and 10000px wide (40M pixels) and report truncation when capped. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
@@ -113,7 +114,7 @@ export async function design_create(args = {}, overrides = {}) {
     const attach = designSystemHook(choice.designSystem, deps.applyDesignSystem);
     const prepareComposer = async (target) => {
       selectedModel = await deps.applyModelToPage(target, modelRequest);
-      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort);
+      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort, { required: args.effort != null });
       await attach.hook?.(target);
     };
     const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait, beforeSubmit: prepareComposer });
@@ -137,7 +138,7 @@ export async function design_iterate(args = {}, overrides = {}) {
     const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
     const prepareComposer = async (target) => {
       selectedModel = await deps.applyModelToPage(target, modelRequest);
-      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort);
+      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort, { required: args.effort != null });
       await attach.hook?.(target);
     };
     const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait, beforeSubmit: prepareComposer });

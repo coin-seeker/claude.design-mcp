@@ -14,7 +14,7 @@ import path from 'node:path';
 
 import { expandHome } from './helpers.mjs';
 import { listDesignSystems } from './list-systems.mjs';
-import { writeProjectTextFile } from './project-file.mjs';
+import { readProjectTextFile, writeProjectTextFile } from './project-file.mjs';
 
 export const DEFAULT_SYNC_TIMEOUT_MS = 15 * 60 * 1000;
 // `claude -p` has no `AskUserQuestion` tool, so every confirmation the `/design-sync` skill asks for
@@ -26,7 +26,10 @@ export const DEFAULT_SYNC_TIMEOUT_MS = 15 * 60 * 1000;
 // everything after the slash command to the skill body as a fenced `## Hint` block, so this must stay
 // ONE positional string (a second array element would be parsed as a flag, not as prompt text) and must
 // never contain a triple backtick, which would close that fence early.
-export const SYNC_PREAPPROVAL = 'This is an unattended headless run: AskUserQuestion is unavailable, so do not ask anything and do not wait for an answer — a question ends the run without syncing. The time and token cost of a full high-fidelity import is already acknowledged and accepted, so skip the proceed confirmation and continue. Creating a new pinned claude.ai project is pre-approved when this package has no existing .design-sync pin: pick a non-colliding name yourself, call create_project without confirming the name first, and continue through the upload without further approval.';
+// The last sentence exists because a 2026-08-31 re-sync compared local files with the LOCAL manifest
+// (regenerated on every materialize, so it always matches), saw the remote paths existed, and declared
+// "already in sync" — the remote stayed on an older version for a month.
+export const SYNC_PREAPPROVAL = 'This is an unattended headless run: AskUserQuestion is unavailable, so do not ask anything and do not wait for an answer — a question ends the run without syncing. The time and token cost of a full high-fidelity import is already acknowledged and accepted, so skip the proceed confirmation and continue. Creating a new pinned claude.ai project is pre-approved when this package has no existing .design-sync pin: pick a non-colliding name yourself, call create_project without confirming the name first, and continue through the upload without further approval. Decide whether an upload is needed by comparing the remote manifest.json content (version and file hashes) with the local manifest.json; local files matching the local manifest proves nothing about the remote.';
 export const SYNC_ARGS = ['-p', `/design-sync ${SYNC_PREAPPROVAL}`, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
 
 const PROJECT_URL_RE = /https?:\/\/claude\.ai\/design\/p\/([0-9a-zA-Z-]{20,})/;
@@ -111,17 +114,90 @@ export function extractProject(payload) {
   return { projectId: match[1], url: match[0], systemName: systemNameFrom(searched, searched.slice(match.index + match[0].length)) };
 }
 
+// The DesignSync tool's refusal when the headless run has no design-system grant. It only appears in
+// a tool_result inside the transcript, so it is searched in the FULL stdout (raw keeps a tail only).
+const AUTH_REFUSAL_RE = /needs design-system authorization/u;
+export const AUTH_MISSING_ERROR = 'DesignSync authorization is missing — run /design-login once from an interactive Claude Code session on this machine, then sync again';
+const RESULT_DETAIL_MAX = 300;
+
+function resultDetail(payload) {
+  if (typeof payload?.result !== 'string') return '';
+  const line = payload.result.replace(/\s+/gu, ' ').trim();
+  if (!line) return '';
+  return `: ${line.length > RESULT_DETAIL_MAX ? `${line.slice(0, RESULT_DETAIL_MAX)}…` : line}`;
+}
+
 // PROTOCOL R3: exit 0 and `subtype: "success"` prove nothing — the empty-directory spike run
-// returned both while its result body refused to sync. Only a project URL/ID counts as an upload.
+// returned both while its result body refused to sync. Only a project URL/ID counts as an upload
+// (and runDesignSync then checks the remote manifest). Failures carry the concrete cause — the
+// operator otherwise only saw a generic line while the reason sat in the transcript.
 export function evaluateSyncOutput({ code, stdout, stderr }) {
   const raw = { code, stdout: tailOf(stdout), stderr: tailOf(stderr) };
-  if (code !== 0) return { ok: false, error: `claude exited with non-zero status ${code}`, raw };
+  const fail = (error) => ({ ok: false, error: AUTH_REFUSAL_RE.test(String(stdout ?? '')) ? AUTH_MISSING_ERROR : error, raw });
   const payload = parseClaudeResult(stdout) || parseClaudeJson(stdout);
-  if (!payload) return { ok: false, error: 'claude produced no parsable JSON result', raw };
-  if (payload.is_error === true) return { ok: false, error: `claude reported an error result (subtype ${payload.subtype ?? 'unknown'})`, raw };
+  if (code !== 0) return fail(`claude exited with non-zero status ${code}${resultDetail(payload)}`);
+  if (!payload) return fail('claude produced no parsable JSON result');
+  if (payload.is_error === true) return fail(`claude reported an error result (subtype ${payload.subtype ?? 'unknown'})${resultDetail(payload)}`);
   const project = extractProject(payload);
-  if (!project) return { ok: false, error: 'sync completed but no project id was reported — /design-sync refused or uploaded nothing', raw };
+  if (!project) return fail('sync completed but no project id was reported — /design-sync refused or uploaded nothing');
   return { ok: true, systemName: project.systemName, projectId: project.projectId, url: project.url, raw };
+}
+
+async function readJsonFileOrNull(file) {
+  try {
+    return JSON.parse(await readFile(file, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function manifestIdentity(manifest) {
+  return JSON.stringify({
+    designSystemId: manifest?.designSystemId ?? null,
+    version: manifest?.version ?? null,
+    files: Array.isArray(manifest?.files) ? manifest.files.map((entry) => [entry?.path, entry?.sha256]) : null,
+  });
+}
+
+// The upload only "landed" when the remote manifest.json names the same design-system version and
+// file hashes as the local one (`generatedAt` changes on every materialize, so it is ignored).
+// Converter-shape packages (`/design-sync` builds a ds-bundle) never upload manifest.json, and GetFile
+// answers a missing path with empty content — those are skipped; a prebuilt package must have it.
+export async function verifyRemoteManifest({ dir, projectId, onProgress, readProjectFile = readProjectTextFile }) {
+  const local = await readJsonFileOrNull(path.join(dir, 'manifest.json')).catch(() => null);
+  if (!local) {
+    onProgress?.('verify: skipped (no local manifest.json)');
+    return { verified: null };
+  }
+  let remoteText;
+  try {
+    remoteText = String(await readProjectFile({ projectId, path: 'manifest.json' }) ?? '');
+  } catch (error) {
+    return { verified: false, error: `remote manifest verification failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (!remoteText.trim()) {
+    const pin = await readJsonFileOrNull(path.join(dir, '.design-sync', 'config.json')).catch(() => null);
+    if (String(pin?.shape ?? '').startsWith('prebuilt')) {
+      return { verified: false, error: 'remote manifest.json is missing — upload did not land' };
+    }
+    onProgress?.('verify: skipped (converter-shape package has no remote manifest)');
+    return { verified: null };
+  }
+  let remote;
+  try {
+    remote = JSON.parse(remoteText);
+  } catch (error) {
+    return { verified: false, error: `remote manifest verification failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (manifestIdentity(remote) !== manifestIdentity(local)) {
+    return {
+      verified: false,
+      error: `remote manifest does not match the local package (remote v${remote?.version ?? '?'}, local v${local.version ?? '?'}) — upload did not land`,
+    };
+  }
+  onProgress?.(`verify: remote manifest matches (v${local.version ?? '?'})`);
+  return { verified: true };
 }
 
 export function resolveTimeoutMs(explicit, env = process.env) {
@@ -177,7 +253,15 @@ export function stripLeadingThemeInline(content) {
 export async function flattenSyncedStyles({ dir, projectId, onProgress, writeProjectFile = writeProjectTextFile }) {
   try {
     const bundleDir = path.join(dir, 'ds-bundle');
-    const styles = await readFile(path.join(bundleDir, 'styles.css'), 'utf8');
+    const styles = await readFile(path.join(bundleDir, 'styles.css'), 'utf8').catch((error) => {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    });
+    // Prebuilt packages author a real root styles.css and have no ds-bundle at all: nothing to flatten.
+    if (styles === null) {
+      onProgress?.('flatten: skipped (no ds-bundle/styles.css)');
+      return { flattened: false };
+    }
     if (!isStylesShim(styles)) {
       onProgress?.('flatten: skipped (ds-bundle/styles.css is not an import shim)');
       return { flattened: false };
@@ -236,7 +320,7 @@ async function withTimeout(run, timeoutMs) {
   }
 }
 
-export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = defaultSpawn, writeProjectFile = writeProjectTextFile, lookupSystemName = lookupDesignSystemName, env = process.env } = {}) {
+export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = defaultSpawn, writeProjectFile = writeProjectTextFile, readProjectFile = readProjectTextFile, lookupSystemName = lookupDesignSystemName, env = process.env } = {}) {
   const requested = String(dir ?? '').trim();
   if (!requested) throw new Error('dir is required');
   const target = path.resolve(expandHome(requested));
@@ -252,6 +336,8 @@ export async function runDesignSync({ dir, timeoutMs, onProgress, spawnImpl = de
   const synced = { dir: target, ...evaluateSyncOutput(outcome) };
   if (!synced.ok) return { ...synced, flattened: false };
   synced.systemName = await resolveSystemName(synced.projectId, synced.systemName, lookupSystemName);
+  const verification = await verifyRemoteManifest({ dir: target, projectId: synced.projectId, onProgress, readProjectFile });
+  if (verification.verified === false) return { ...synced, ok: false, error: verification.error, verified: false, flattened: false };
   const flattened = await flattenSyncedStyles({ dir: target, projectId: synced.projectId, onProgress, writeProjectFile });
-  return { ...synced, ...flattened };
+  return { ...synced, verified: verification.verified, ...flattened };
 }

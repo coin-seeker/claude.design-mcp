@@ -278,9 +278,25 @@ successful tokens-only sync, it uses the logged-in Chrome/CDP session to replace
   gate, which is why this only ever surfaced on a first-time sync. Claude Code appends the text
   after the slash command to the skill body as a fenced `## Hint` block, so it must stay one
   positional string with no triple backtick in it.
+- **A project link is necessary but not sufficient.** After the link, the tool reads the remote
+  `manifest.json` (GetFile over the logged-in session) and compares `designSystemId`, `version` and
+  the file `path`/`sha256` list with the local `manifest.json` (`generatedAt` is ignored). A
+  mismatch, an unreadable remote, or a missing remote manifest on a `prebuilt-*` package turns the
+  run into `ok: false` (`… — upload did not land`) and skips flatten. This exists because a re-sync
+  once compared local files only with the local manifest, declared "already in sync", and left the
+  remote a month behind.
+- The result adds `verified: true | false | null`: `true` = remote manifest matches, `false` = the
+  check failed (the run is `ok: false`), `null` = skipped — no local `manifest.json`, or a
+  converter-shape package (`.design-sync/config.json` `shape` not `prebuilt-*`) whose remote has no
+  manifest (GetFile returns empty content for a missing path, and converter uploads never carry one).
+- Failures name their cause: a DesignSync authorization refusal anywhere in the transcript becomes
+  `DesignSync authorization is missing — run /design-login once …`, and a non-zero exit or
+  `is_error` result appends Claude's own result text (first 300 chars), e.g.
+  `claude exited with non-zero status 1: API Error: 400 … Run 'claude update'`.
 - A first sync takes ~10 minutes; unchanged re-runs take ~2. The CLI exits `1` on a failed sync.
-- The result adds `flattened: true|false`. A post-sync browser/write failure is reported as
-  `flattenError` while the completed upload remains `ok: true`.
+- The result adds `flattened: true|false`. A package without `ds-bundle/styles.css` (prebuilt
+  packages author a real root `styles.css`) skips flatten with no `flattenError`. A post-sync
+  browser/write failure is reported as `flattenError` while the completed upload remains `ok: true`.
 
 `design_system_list` (CLI: `list-systems`) is the read side of the same feature. claude.ai has no
 separate design-systems endpoint — design systems are returned by the ordinary project list RPC

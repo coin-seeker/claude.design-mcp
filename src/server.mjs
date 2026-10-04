@@ -153,6 +153,7 @@ async function runCli(argv) {
         ok: synced.ok,
         systemName: synced.systemName ?? null,
         error: synced.error ?? null,
+        verified: synced.verified ?? null,
         flattened: synced.flattened,
         flattenError: synced.flattenError ?? null,
         projectId: synced.projectId ?? null,

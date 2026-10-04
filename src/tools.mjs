@@ -1,5 +1,5 @@
 import { decodeProjectData, decodeToBuffer, sanitizeName } from './helpers.mjs';
-import { applyEffortToPage, applyModelToPage, resolveEffort, resolveOptionalModel, withResolvedModel } from './model.mjs';
+import { applyEffortToPage, applyModelToPage, rememberProjectEffort, resolveEffort, resolveOptionalModel, withResolvedModel } from './model.mjs';
 import { applyDesignSystem, assertDesignSystemChoice, designSystemChoiceEcho, designSystemHook } from './design-system.mjs';
 import { checkDesign } from './check.mjs';
 import { checkDesignRpc } from './check-rpc.mjs';
@@ -19,7 +19,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Every tool takes an optional `caller` ({ directory, sessionID, agent, project? }): transport metadata the
 // client injects for the call history. The dispatcher strips it, so no handler ever receives it as an argument.
 const CALLER_PROPERTY = { caller: { type: 'object' } };
-const EFFORT_PROPERTY = { type: 'string', description: 'Composer effort: low | medium | high | extra | max (xhigh is an alias of extra). Defaults to extra. An explicit effort that the composer does not offer fails the call before the prompt is sent.' };
+const EFFORT_PROPERTY = { type: 'string', description: 'Composer effort: low | medium | high | extra | max (xhigh is an alias of extra). Defaults to extra. If the composer cannot be set to the effort (explicit or default) the call fails before the prompt is sent; question-form Continue and interruption Resume re-apply it after a page reload.' };
 const schema = (properties, required = []) => ({ type: 'object', properties: { ...properties, ...CALLER_PROPERTY }, required });
 export const TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
@@ -108,13 +108,14 @@ export async function design_create(args = {}, overrides = {}) {
   return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
     const { projectId, reused } = await deps.findOrCreateProject(scoped, name, args);
+    rememberProjectEffort(projectId, effort);
     const wait = args.wait !== false;
     let selectedModel = null;
     let selectedEffort = null;
     const attach = designSystemHook(choice.designSystem, deps.applyDesignSystem);
     const prepareComposer = async (target) => {
       selectedModel = await deps.applyModelToPage(target, modelRequest);
-      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort, { required: args.effort != null });
+      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort, { required: true });
       await attach.hook?.(target);
     };
     const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 360_000), wait, beforeSubmit: prepareComposer });
@@ -129,6 +130,7 @@ export async function design_iterate(args = {}, overrides = {}) {
   const prompt = requireString(args.prompt, 'prompt');
   const modelRequest = resolveOptionalModel(args.model);
   const effort = resolveEffort(modelRequest, args.effort);
+  rememberProjectEffort(projectId, effort);
   const session = await deps.ensureSession({ visible: false });
   return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
@@ -138,7 +140,7 @@ export async function design_iterate(args = {}, overrides = {}) {
     const attach = designSystemHook(args.designSystem, deps.applyDesignSystem);
     const prepareComposer = async (target) => {
       selectedModel = await deps.applyModelToPage(target, modelRequest);
-      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort, { required: args.effort != null });
+      selectedEffort = effort === null ? null : await deps.applyEffortToPage(target, effort, { required: true });
       await attach.hook?.(target);
     };
     const turn = await deps.runGenerateTurn(scoped, projectId, prompt, { timeoutMs: Number(args.timeoutMs || 240_000), wait, beforeSubmit: prepareComposer });

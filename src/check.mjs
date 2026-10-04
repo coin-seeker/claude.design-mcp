@@ -7,6 +7,7 @@ import { awaitDesignReady, holdOperationPage, isHeldOperationPage } from './sess
 import { logEvent } from './log.mjs';
 import { observeTurnAction } from './turn-network.mjs';
 import { monitorPendingTurn } from './pending-monitor.mjs';
+import { applyEffortToPage, projectEffort } from './model.mjs';
 
 const POLL_INTERVAL_MS = 2_000;
 const POLL_CYCLES = 3;
@@ -45,7 +46,9 @@ function claimResume(projectId) {
 }
 
 export async function checkDesign(session, projectId, deps = {}) {
-  const answerQuestions = deps.answerQuestions || tryAnswerQuestions;
+  const effort = projectEffort(projectId);
+  const applyEffort = deps.applyEffort || applyEffortToPage;
+  const answerQuestions = deps.answerQuestions || ((page) => tryAnswerQuestions(page, { effort, applyEffort }));
   const ready = deps.awaitReady || awaitDesignReady;
   const inspectInterruption = deps.interruptionState || interruptionState;
   const monitorPending = deps.monitorPending || monitorPendingTurn;
@@ -99,6 +102,8 @@ export async function checkDesign(session, projectId, deps = {}) {
         problem: 'resume_attempts_exhausted',
       };
     }
+    // Resume restarts generation from the composer's effort, which this page load reset to Medium.
+    await applyEffort(session.page, effort, { required: true });
     await observeTurnAction(session.page, async () => {
       logEvent('turn.resume_click', { projectId, resumeAttempts: resume.attempts, url: typeof session.page.url === 'function' ? session.page.url() : '' });
       await interruption.resumeButton.click({ timeout: 15_000 });

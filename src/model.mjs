@@ -48,6 +48,19 @@ export function resolveEffort(_request, effort) {
   return effort ?? DEFAULT_EFFORT;
 }
 
+// A page reload resets the composer's effort to the site default (Medium), and claude.ai starts
+// follow-up turns of its own (question-form Continue, interruption Resume) from whatever the
+// composer shows. Remember each project's effort so those clicks can re-apply it first.
+const PROJECT_EFFORT = new Map();
+
+export function rememberProjectEffort(projectId, effort) {
+  if (projectId && effort) PROJECT_EFFORT.set(String(projectId), effort);
+}
+
+export function projectEffort(projectId) {
+  return PROJECT_EFFORT.get(String(projectId)) ?? DEFAULT_EFFORT;
+}
+
 // textContent glues badges onto the label ("MediumRecommended"), so stop at the next capital.
 function effortLabelWord(label) {
   return String(label).trim().match(/^[A-Za-z][a-z]*/)?.[0] ?? '';

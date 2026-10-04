@@ -6,6 +6,7 @@ import { isPageError } from './errors.mjs';
 import { logEvent } from './log.mjs';
 import { observeTurnAction } from './turn-network.mjs';
 import { monitorPendingTurn } from './pending-monitor.mjs';
+import { applyEffortToPage, projectEffort } from './model.mjs';
 
 const locks = new Map();
 const SUBMIT_TIMEOUT_MS = 30_000;
@@ -85,6 +86,19 @@ export async function tryAnswerQuestions(page, options = {}) {
       // group may re-render
     }
   }
+  // Continue starts the real generation turn at whatever effort the composer shows, and a reload
+  // since the prompt went in has reset it to Medium — so re-apply it, and never Continue without it.
+  if (options.effort) {
+    const applyEffort = options.applyEffort || applyEffortToPage;
+    try {
+      await applyEffort(page, options.effort, { required: true });
+    }
+    catch (error) {
+      if (isPageError(error)) throw error;
+      logEvent('turn.continue_effort_failed', { effort: options.effort, error: String(error?.message || error) });
+      return false;
+    }
+  }
   try {
     await observeTurnAction(page, async () => {
       logEvent('turn.continue_click', { url: typeof page.url === 'function' ? page.url() : '' });
@@ -113,7 +127,7 @@ async function runUnlocked(session, projectId, prompt, options) {
   const stableCycles = Number(options.stableCycles || 3);
   const ready = options.awaitReady || awaitDesignReady;
   const listFiles = options.listFiles || defaultListFiles;
-  const answerQuestions = options.answerQuestions || tryAnswerQuestions;
+  const answerQuestions = options.answerQuestions || ((page) => tryAnswerQuestions(page, { effort: projectEffort(projectId) }));
   const monitorPending = options.monitorPending || monitorPendingTurn;
   const holdPage = options.holdPage || holdOperationPage;
   const submitTimeoutMs = Number(options.submitTimeoutMs ?? SUBMIT_TIMEOUT_MS);

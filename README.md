@@ -161,9 +161,13 @@ frontmost tab. Generation still uses its composer page.
   the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
 - `design_create` and `design_iterate` accept an optional `effort`: `low`, `medium`, `high`,
   `extra`, or `max`, matching the composer's Effort menu (`xhigh` is an alias of `extra`).
-  Without `effort` every generation uses `extra`; if the composer does not offer it the result
-  reports `effort: "unavailable"`. An explicit `effort` the composer does not offer fails the call
-  before the prompt is sent, with the live options in the error. CLI: `--effort <value>`.
+  Without `effort` every generation uses `extra`. If the composer cannot be set to the effort
+  (explicit or default) the call fails before the prompt is sent, with the live options in the
+  error. A page reload resets the composer to Medium, so the effort is re-applied right before
+  every submit and also before the follow-up turns the server starts itself: the clarifying-question
+  form's Continue (skipped, leaving `awaiting_input`, if the effort cannot be set) and the
+  interruption Resume in `design_check`. Those use the project's last requested effort in this
+  server process, else `extra`. CLI: `--effort <value>`.
 - `design_create`, `design_iterate`, and `design_variants` accept a `designSystem`
   (CLI `--design-system`), the name of one of the account design systems reported by
   `design_system_list`. It is matched case-insensitively, an unambiguous partial name works,

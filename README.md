@@ -161,13 +161,13 @@ frontmost tab. Generation still uses its composer page.
   the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
 - `design_create` and `design_iterate` accept an optional `effort`: `low`, `medium`, `high`,
   `extra`, or `max`, matching the composer's Effort menu (`xhigh` is an alias of `extra`).
-  Without `effort` every generation uses `extra`. If the composer cannot be set to the effort
+  Without `effort` every generation uses `high`. If the composer cannot be set to the effort
   (explicit or default) the call fails before the prompt is sent, with the live options in the
   error. A page reload resets the composer to Medium, so the effort is re-applied right before
   every submit and also before the follow-up turns the server starts itself: the clarifying-question
   form's Continue (skipped, leaving `awaiting_input`, if the effort cannot be set) and the
   interruption Resume in `design_check`. Those use the project's last requested effort in this
-  server process, else `extra`. CLI: `--effort <value>`.
+  server process, else `high`. CLI: `--effort <value>`.
 - `design_create`, `design_iterate`, and `design_variants` accept a `designSystem`
   (CLI `--design-system`), the name of one of the account design systems reported by
   `design_system_list`. It is matched case-insensitively, an unambiguous partial name works,
@@ -211,6 +211,15 @@ frontmost tab. Generation still uses its composer page.
   three consecutive Resume attempts and includes `resumeAttempts`, `maxResumeAttempts`,
   and `problem: "resume_attempts_exhausted"`. `_ds/**` design-system material is not counted
   as generated output.
+- A turn that claude.ai ends inside a thinking block without writing anything is reported as
+  `no_output` with `cutOff: true` and `problem: "turn_cut_off"`, even when earlier turns left
+  files behind (send a follow-up `design_iterate`). While the server still holds the turn's page it
+  stays `generating` and the page monitor makes the call.
+- When a turn ends with `ready_for_verification`, the held page stays open up to 5 minutes
+  (`CLAUDE_DESIGN_VERIFY_GRACE_MS`) so the background check can report back. If the page shows
+  "The background check didn't finish", `design_check` clicks `Re-run check` for a turn that
+  produced files (at most twice per project) and returns `generating` with `verificationRerun: true`.
+  Transient RPC timeouts inside the monitor no longer close a page mid-generation.
 
 ## Asynchronous workflow
 

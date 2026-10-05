@@ -1,10 +1,15 @@
-import { fileEntriesOf, generatedFileEntries, lastMessageRoleOf } from './helpers.mjs';
+import { decodeProjectData, fileEntriesOf, generatedFileEntries, turnStateOf } from './helpers.mjs';
 import { logEvent, pageIdentity } from './log.mjs';
 import { omelette } from './rpc.mjs';
 import { classifyTurnRequest, signatureStable, stabilitySignature } from './turn-classify.mjs';
 
 const ASYNC_HOLD_TIMEOUT_MS = 45 * 60_000;
 const MIN_WATCH_MS = 45_000;
+// ready_for_verification starts a background check that runs inside this tab; closing the tab before it
+// reports back leaves claude.ai with "The background check didn't finish". Observed reports land in 19-81s.
+const VERIFY_GRACE_MS = 5 * 60_000;
+const MAX_TRANSIENT_ERRORS = 10;
+const TRANSIENT_ERROR = /AbortError|TimeoutError|timed out|Execution context was destroyed|frame was detached/i;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const responseUrl = (response) => typeof response.url === 'function' ? response.url() : response.url;
 const requestUrl = (request) => typeof request.url === 'function' ? request.url() : request.url;
@@ -16,9 +21,16 @@ async function defaultListFiles(session, projectId) {
   return generatedFileEntries(fileEntriesOf(result));
 }
 
-async function defaultLastMessageRole(session, projectId) {
-  const result = await omelette(session.page, 'GetProjectData', { projectId }, session.org);
-  return lastMessageRoleOf(result);
+async function defaultTurnState(session, projectId) {
+  return turnStateOf(decodeProjectData(await omelette(session.page, 'GetProjectData', { projectId }, session.org)));
+}
+
+function turnStateReader(options) {
+  if (options.getTurnState) return options.getTurnState;
+  if (options.getLastMessageRole) {
+    return async (session, projectId) => ({ role: await options.getLastMessageRole(session, projectId), cutOff: false, verificationPending: false, lastAt: null });
+  }
+  return defaultTurnState;
 }
 
 async function sleepWithPage(page, ms) {
@@ -29,7 +41,8 @@ async function sleepWithPage(page, ms) {
 export async function monitorPendingTurn(session, projectId, options = {}) {
   const listFiles = options.listFiles || defaultListFiles;
   const answerQuestions = options.answerQuestions || (async () => false);
-  const getLastMessageRole = options.getLastMessageRole || defaultLastMessageRole;
+  const getTurnState = turnStateReader(options);
+  const verifyGraceMs = Number(options.verifyGraceMs ?? process.env.CLAUDE_DESIGN_VERIFY_GRACE_MS ?? VERIFY_GRACE_MS);
   const pollMs = Number(options.pollIntervalMs ?? 2_000);
   const quietMs = Number(options.quietMs ?? process.env.CLAUDE_DESIGN_QUIET_MS ?? 20_000);
   const stableCycles = Number(options.stableCycles || 3);
@@ -69,6 +82,8 @@ export async function monitorPendingTurn(session, projectId, options = {}) {
   session.page.on('request', onRequest);
   session.page.on('response', onResponse);
   session.page.on('requestfailed', onRequestFailed);
+  let transientErrors = 0;
+  let verifyWaitLogged = false;
   try {
     for (;;) {
       await sleepWithPage(session.page, pollMs);
@@ -76,8 +91,19 @@ export async function monitorPendingTurn(session, projectId, options = {}) {
         answeredQuestions = true;
         lastActivity = Date.now();
       }
-      const entries = await listFiles(session, projectId);
-      const lastMessageRole = await getLastMessageRole(session, projectId);
+      let entries;
+      let turn;
+      try {
+        entries = await listFiles(session, projectId);
+        turn = await getTurnState(session, projectId);
+        transientErrors = 0;
+      } catch (error) {
+        // A busy tab can time out an RPC; giving up here would close the tab mid-generation.
+        if (!TRANSIENT_ERROR.test(String(error?.message ?? error)) || ++transientErrors > MAX_TRANSIENT_ERRORS) throw error;
+        logEvent('turn.monitor_transient', { projectId, pageId, attempt: transientErrors, error: String(error?.message || error) });
+        continue;
+      }
+      const lastMessageRole = turn.role;
       const signature = stabilitySignature(entries);
       history.push(signature);
       const hasFiles = entries.length > 0;
@@ -92,7 +118,15 @@ export async function monitorPendingTurn(session, projectId, options = {}) {
       const settled = now - startedAt >= minWatchMs
         && now - lastActivity > quietMs
         && signatureStable(history, stableCycles);
-      if (lastMessageRole === 'assistant' && settled && (progressed || !hasFiles)) {
+      if (lastMessageRole === 'assistant' && settled && turn.cutOff) {
+        logEvent('turn.monitor_complete', { projectId, pageId, status: 'no_output', cutOff: true, files: entries.length, lastMessageRole, answeredQuestions, ms: now - startedAt });
+        return { status: 'no_output', cutOff: true, files: entries, lastMessageRole, answeredQuestions, terminal: true };
+      }
+      const verifying = turn.verificationPending && now - (turn.lastAt ?? startedAt) < verifyGraceMs;
+      if (lastMessageRole === 'assistant' && settled && verifying) {
+        if (!verifyWaitLogged) logEvent('turn.monitor_verify_wait', { projectId, pageId, graceMs: verifyGraceMs });
+        verifyWaitLogged = true;
+      } else if (lastMessageRole === 'assistant' && settled && (progressed || !hasFiles)) {
         const status = hasFiles ? 'done' : 'no_output';
         logEvent('turn.monitor_complete', { projectId, pageId, status, files: entries.length, lastMessageRole, answeredQuestions, ms: now - startedAt });
         return { status, files: entries, lastMessageRole, answeredQuestions, terminal: true };

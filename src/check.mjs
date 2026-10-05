@@ -1,7 +1,7 @@
 import { tryAnswerQuestions } from './turn.mjs';
 import { stabilitySignature, signatureStable } from './turn-classify.mjs';
 import { omelette } from './rpc.mjs';
-import { fileEntriesOf, generatedFileEntries, lastMessageRoleOf } from './helpers.mjs';
+import { decodeProjectData, fileEntriesOf, generatedFileEntries, turnStateOf } from './helpers.mjs';
 import { isDomTransitionError, isPageError } from './errors.mjs';
 import { awaitDesignReady, holdOperationPage, isHeldOperationPage } from './session.mjs';
 import { logEvent } from './log.mjs';
@@ -12,13 +12,36 @@ import { applyEffortToPage, projectEffort } from './model.mjs';
 const POLL_INTERVAL_MS = 2_000;
 const POLL_CYCLES = 3;
 const MAX_RESUME_ATTEMPTS = 3;
+const MAX_VERIFY_RERUNS = 2;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const resumeAttempts = new Map();
-export function classifyPollStatus({ history, files, lastMessageRole, isHeld, cycles = POLL_CYCLES }) {
+const verifyReruns = new Map();
+// cutOff: the latest turn stopped inside a thinking block without writing anything. While a page still
+// holds the turn its monitor makes the final call; otherwise older files must not turn it into "done".
+export function classifyPollStatus({ history, files, lastMessageRole, isHeld, cutOff = false, cycles = POLL_CYCLES }) {
   const stable = signatureStable(history, cycles);
+  if (stable && cutOff && lastMessageRole === 'assistant') return isHeld ? 'generating' : 'no_output';
   return !stable ? 'generating'
     : files.length === 0 ? lastMessageRole === 'user' ? isHeld ? 'generating' : 'stalled' : 'no_output'
       : lastMessageRole === 'assistant' ? 'done' : 'generating';
+}
+
+export async function verificationBannerState(page) {
+  // Not persisted server-side (a reload drops it), so the selector is matched page-wide by its text.
+  const banner = page.getByText(/The background check didn.t finish/i).first();
+  const visible = (await banner.count()) > 0 && await banner.isVisible();
+  if (!visible) return { visible: false, rerunButton: null };
+  const rerunButton = page.getByRole('button', { name: /Re-run check/i }).first();
+  const canRerun = (await rerunButton.count()) > 0 && await rerunButton.isVisible();
+  return { visible: true, rerunButton: canRerun ? rerunButton : null };
+}
+
+function claimVerifyRerun(projectId) {
+  const key = String(projectId);
+  const attempts = verifyReruns.get(key) || 0;
+  if (attempts >= MAX_VERIFY_RERUNS) return { allowed: false, attempts };
+  verifyReruns.set(key, attempts + 1);
+  return { allowed: true, attempts: attempts + 1 };
 }
 async function questionFormVisible(page) {
   const continueButton = page.locator('button:has-text("Continue")').first();
@@ -65,12 +88,14 @@ export async function checkDesign(session, projectId, deps = {}) {
     { projectId, depth: 100, offset: 0 },
     session.org,
   )));
-  const getLastMessageRole = async () => lastMessageRoleOf(await callOmelette(
+  const getTurnState = async () => turnStateOf(decodeProjectData(await callOmelette(
     session.page,
     'GetProjectData',
     { projectId },
     session.org,
-  ));
+  )));
+  const getLastMessageRole = async () => (await getTurnState()).role;
+  const inspectVerification = deps.verificationBanner || verificationBannerState;
 
   let interruption;
   try {
@@ -119,7 +144,7 @@ export async function checkDesign(session, projectId, deps = {}) {
         answerQuestions,
         baselineSignature: stabilitySignature(baselineFiles),
         listFiles: async () => listFiles(),
-        getLastMessageRole: async () => getLastMessageRole(),
+        getTurnState: async () => getTurnState(),
         requireChange: false,
       });
       holdPage(session.page, completion, 'resumed-turn-finished', { projectId });
@@ -170,7 +195,7 @@ export async function checkDesign(session, projectId, deps = {}) {
         answerQuestions,
         baselineSignature: stabilitySignature(baselineFiles),
         listFiles: async () => listFiles(),
-        getLastMessageRole: async () => getLastMessageRole(),
+        getTurnState: async () => getTurnState(),
         requireChange: false,
       });
       holdPage(session.page, completion, 'continued-turn-finished', { projectId });
@@ -184,6 +209,43 @@ export async function checkDesign(session, projectId, deps = {}) {
     };
   }
 
+  // "The background check didn't finish" means the verifier's tab closed before it reported back. Re-run
+  // it only for a turn that actually produced files; a cut-off turn needs a new prompt, not a check.
+  let verification = { visible: false, rerunButton: null };
+  try {
+    verification = await inspectVerification(session.page);
+  } catch (error) {
+    if (!isDomTransitionError(error)) throw error;
+  }
+  if (verification.rerunButton) {
+    const turn = await getTurnState();
+    const rerun = turn.produced && turn.role === 'assistant' ? claimVerifyRerun(projectId) : { allowed: false, attempts: 0 };
+    if (rerun.allowed) {
+      const baselineFiles = await listFiles();
+      logEvent('turn.verify_rerun_click', { projectId, attempt: rerun.attempts });
+      await verification.rerunButton.click({ timeout: 15_000 });
+      if (!isHeldPage(session.page)) {
+        const completion = monitorPending(session, projectId, {
+          answerQuestions,
+          baselineSignature: stabilitySignature(baselineFiles),
+          listFiles: async () => listFiles(),
+          getTurnState: async () => getTurnState(),
+          requireChange: false,
+        });
+        holdPage(session.page, completion, 'verification-rerun-finished', { projectId });
+      }
+      return {
+        projectId,
+        status: 'generating',
+        files: baselineFiles,
+        lastMessageRole: turn.role,
+        answeredQuestions: false,
+        verificationRerun: true,
+        verificationRerunAttempts: rerun.attempts,
+      };
+    }
+  }
+
   const history = [];
   let files = [];
   for (let cycle = 0; cycle < POLL_CYCLES; cycle += 1) {
@@ -191,8 +253,9 @@ export async function checkDesign(session, projectId, deps = {}) {
     files = await listFiles();
     history.push(stabilitySignature(files));
   }
-  const lastMessageRole = await getLastMessageRole();
-  const status = classifyPollStatus({ history, files, lastMessageRole, isHeld: isHeldPage(session.page) });
+  const turn = await getTurnState();
+  const lastMessageRole = turn.role;
+  const status = classifyPollStatus({ history, files, lastMessageRole, isHeld: isHeldPage(session.page), cutOff: turn.cutOff });
 
-  return { projectId, status, files, lastMessageRole, answeredQuestions: false };
+  return { projectId, status, files, lastMessageRole, answeredQuestions: false, ...(turn.cutOff && status === 'no_output' ? { cutOff: true, problem: 'turn_cut_off' } : {}) };
 }

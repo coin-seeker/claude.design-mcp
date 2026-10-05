@@ -1,4 +1,4 @@
-import { decodeProjectData, fileEntriesOf, generatedFileEntries, lastMessageOf } from './helpers.mjs';
+import { decodeProjectData, fileEntriesOf, generatedFileEntries, lastMessageOf, turnStateOf } from './helpers.mjs';
 import { omelette } from './rpc.mjs';
 import { classifyPollStatus } from './check.mjs';
 import { stabilitySignature } from './turn-classify.mjs';
@@ -32,7 +32,7 @@ export async function checkDesignRpc(scoped, projectId, deps = {}) {
     history.push(stabilitySignature(files));
   }
   const lastMessageRole = lastMessageOf(data)?.role ?? null;
-  const status = classifyPollStatus({ history, files, lastMessageRole, isHeld: false });
+  const status = classifyPollStatus({ history, files, lastMessageRole, isHeld: false, cutOff: turnStateOf(data).cutOff });
   if (status === 'no_output') return { fallback: 'no-output' };
   return { projectId, status, files, lastMessageRole, answeredQuestions: false, checkPath: 'rpc' };
 }

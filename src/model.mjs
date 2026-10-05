@@ -37,7 +37,7 @@ const EFFORT_ALIASES = new Map([
   ['maximum', 'max'],
   ['med', 'medium'],
 ]);
-export const DEFAULT_EFFORT = 'extra';
+export const DEFAULT_EFFORT = 'high';
 
 export function normalizeEffort(value) {
   const compact = String(value).trim().toLowerCase().replace(/[\s_-]+/g, '');

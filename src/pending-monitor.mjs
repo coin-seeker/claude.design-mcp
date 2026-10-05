@@ -122,7 +122,9 @@ export async function monitorPendingTurn(session, projectId, options = {}) {
         logEvent('turn.monitor_complete', { projectId, pageId, status: 'no_output', cutOff: true, files: entries.length, lastMessageRole, answeredQuestions, ms: now - startedAt });
         return { status: 'no_output', cutOff: true, files: entries, lastMessageRole, answeredQuestions, terminal: true };
       }
-      const verifying = turn.verificationPending && now - (turn.lastAt ?? startedAt) < verifyGraceMs;
+      // A re-run check restarts the verifier now, long after the turn's own message: count from the later.
+      const verifyFrom = Math.max(turn.lastAt ?? startedAt, Number(options.verifySince ?? 0));
+      const verifying = turn.verificationPending && now - verifyFrom < verifyGraceMs;
       if (lastMessageRole === 'assistant' && settled && verifying) {
         if (!verifyWaitLogged) logEvent('turn.monitor_verify_wait', { projectId, pageId, graceMs: verifyGraceMs });
         verifyWaitLogged = true;

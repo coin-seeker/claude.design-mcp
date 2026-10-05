@@ -220,10 +220,21 @@ export async function checkDesign(session, projectId, deps = {}) {
   if (verification.rerunButton) {
     const turn = await getTurnState();
     const rerun = turn.produced && turn.role === 'assistant' ? claimVerifyRerun(projectId) : { allowed: false, attempts: 0 };
+    let clicked = false;
+    let baselineFiles = [];
     if (rerun.allowed) {
-      const baselineFiles = await listFiles();
+      baselineFiles = await listFiles();
       logEvent('turn.verify_rerun_click', { projectId, attempt: rerun.attempts });
-      await verification.rerunButton.click({ timeout: 15_000 });
+      try {
+        await verification.rerunButton.click({ timeout: 15_000 });
+        clicked = true;
+      } catch (error) {
+        if (isPageError(error)) throw error;
+        verifyReruns.set(String(projectId), rerun.attempts - 1);
+        logEvent('turn.verify_rerun_failed', { projectId, error: String(error?.message || error) });
+      }
+    }
+    if (clicked) {
       if (!isHeldPage(session.page)) {
         const completion = monitorPending(session, projectId, {
           answerQuestions,
@@ -231,6 +242,7 @@ export async function checkDesign(session, projectId, deps = {}) {
           listFiles: async () => listFiles(),
           getTurnState: async () => getTurnState(),
           requireChange: false,
+          verifySince: Date.now(),
         });
         holdPage(session.page, completion, 'verification-rerun-finished', { projectId });
       }

@@ -38,10 +38,13 @@ const EFFORT_ALIASES = new Map([
   ['med', 'medium'],
 ]);
 export const DEFAULT_EFFORT = 'high';
+export const EFFORT_LABEL_ALIASES = new Map([
+  ['낮음', 'low'], ['중간', 'medium'], ['높음', 'high'], ['엑스트라', 'extra'], ['최대', 'max'],
+]);
 
 export function normalizeEffort(value) {
   const compact = String(value).trim().toLowerCase().replace(/[\s_-]+/g, '');
-  return EFFORT_ALIASES.get(compact) ?? compact;
+  return EFFORT_LABEL_ALIASES.get(compact) ?? EFFORT_ALIASES.get(compact) ?? compact;
 }
 
 export function resolveEffort(_request, effort) {
@@ -63,7 +66,9 @@ export function projectEffort(projectId) {
 
 // textContent glues badges onto the label ("MediumRecommended"), so stop at the next capital.
 function effortLabelWord(label) {
-  return String(label).trim().match(/^[A-Za-z][a-z]*/)?.[0] ?? '';
+  const text = String(label).trim();
+  return [...EFFORT_LABEL_ALIASES.keys()].find((word) => text.startsWith(word))
+    ?? text.match(/^[A-Za-z][a-z]*/)?.[0] ?? '';
 }
 
 export function matchEffortOption(labels, effort) {
@@ -95,6 +100,23 @@ function extractModelLabel(text) {
   return String(text).match(MODEL_LABEL_PATTERN)?.[0] || '';
 }
 
+export function selectModelCandidate(inputLabels, request) {
+  const labels = inputLabels.map(extractModelLabel);
+  const candidates = labels.flatMap((uiLabel, index) => {
+    if (!uiLabel) return [];
+    const parsed = parseModelRequest(uiLabel);
+    return parsed.version ? [{ ...parsed, uiLabel, index }] : [];
+  });
+  const familyMatches = candidates.filter((candidate) => candidate.family === request.family);
+  const selected = request.version
+    ? familyMatches.find((candidate) => candidate.version === request.version)
+    : familyMatches.sort((left, right) => compareVersions(right.version, left.version))[0];
+  if (!selected) {
+    throw new Error(`Model "${requestedLabel(request)}" not available. Available models: ${labels.filter(Boolean).join(', ')}`);
+  }
+  return { ...selected, apiId: `claude-${selected.family}-${selected.version.replaceAll('.', '-')}` };
+}
+
 async function confirmSelection(page) {
   const confirm = page.locator('[data-testid="confirm-dialog-confirm"]').first();
   try {
@@ -116,23 +138,7 @@ export async function applyModelToPage(page, request) {
   try {
     const menuItems = page.locator('[role="menuitemradio"]');
     await menuItems.first().waitFor({ state: 'visible', timeout: 5_000 });
-    const labels = (await menuItems.allTextContents()).map(extractModelLabel);
-    const candidates = labels.flatMap((uiLabel, index) => {
-      try {
-        const parsed = parseModelRequest(uiLabel);
-        return parsed.version ? [{ ...parsed, uiLabel, index }] : [];
-      } catch {
-        return [];
-      }
-    });
-    const familyMatches = candidates.filter((candidate) => candidate.family === request.family);
-    const selected = request.version
-      ? familyMatches.find((candidate) => candidate.version === request.version)
-      : familyMatches.sort((left, right) => compareVersions(right.version, left.version))[0];
-
-    if (!selected) {
-      throw new Error(`Model "${requestedLabel(request)}" not available. Available models: ${labels.filter(Boolean).join(', ')}`);
-    }
+    const selected = selectModelCandidate(await menuItems.allTextContents(), request);
 
     await menuItems.nth(selected.index).click();
     menuOpen = false;
@@ -143,7 +149,7 @@ export async function applyModelToPage(page, request) {
       .waitFor({ state: 'visible', timeout: 10_000 });
     return {
       uiLabel: selected.uiLabel,
-      apiId: `claude-${selected.family}-${selected.version.replaceAll('.', '-')}`,
+      apiId: selected.apiId,
     };
   } catch (error) {
     if (menuOpen) await page.keyboard.press('Escape').catch(() => {});

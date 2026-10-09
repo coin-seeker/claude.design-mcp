@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Backends
 
-Version **0.9.0** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
+Version **0.9.1** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
 artifact + Cowork session**. Set `CLAUDE_DESIGN_BACKEND=standalone` to use the unchanged
 `claude.ai/design` service, which remains selectable until it closes on **2026-12-14**.
 Tool names and input schemas are identical; the backend is selected on each call.
@@ -34,7 +34,7 @@ Artifacts checks return `checkPath: "artifacts"`, `answeredQuestions: false`, an
 auto-resume; `resume_exhausted` belongs only to the standalone backend. Tool-result user
 events and composer echoes (`<local-command-stdout>Set model…`) are not real prompts; zero-turn
 `result` events are session handshakes. A worker counts as finished when it is idle in bucket
-`completed` or `blocked`. `costUsd` is the turn's cost (session `total_cost_usd` delta). `CLAUDE_DESIGN_STALL_MS` defaults to `600000` (10 minutes).
+`completed`, `blocked` or `review_ready`. `costUsd` is the turn's cost (session `total_cost_usd` delta). `CLAUDE_DESIGN_STALL_MS` defaults to `600000` (10 minutes).
 
 Artifacts pulls strip the manifest's `project/` prefix, write the Design runtime as
 `support.js` next to each `*.dc.html`, download referenced assets into `_blob/`, and rewrite
@@ -96,11 +96,20 @@ CLI result lines include `account` and `skipped`.
 The artifacts backend detects the surface opened by claude.ai: Cowork uses
 `/cowork/cse_…?artifact=<id>`, while Chat uses `/chat/<conversationUuid>?artifact=<id>`.
 The local index stores `surface` and `chatId` so later iterate/check/status calls use
-the same conversation. Chat reads use the credentials-only conversation API, not CCR.
+the same conversation. Chat message reads use the credentials-only conversation API.
 Chat submissions are confirmed by increased human-message count; prep tool messages
 before the first human do not count as a turn. Terminal `end_turn`/`stop_sequence`
 messages produce done/no_output according to the artifact signature; `max_tokens` and
 `refusal` are interrupted. Human senders are reported as `user`.
+
+Chat checks discover and cache `workspaceSessionId` from up to four 50-item pages of
+the credentials-only conversation list, then read that backing session through CCR.
+An active session reports pending action types or generating/stalled using its latest
+event and `CLAUDE_DESIGN_STALL_MS` (10 minutes by default); iterate also respects known
+session activity. An idle finished session uses terminal chat messages, allowing 60 seconds
+from the newer of its latest event and the prompt's creation time for a delayed reply,
+then reporting `interrupted` with `problem: "idle_without_result"`. Discovery/read failures
+fall back to messages and `CLAUDE_DESIGN_CHAT_STALL_MS` (30 minutes by default).
 
 Chat results omit `sessionId` and `costUsd`; existing URL fields point at the Chat
 conversation. No surface/chatId fields are added to strict tool results. Cowork

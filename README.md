@@ -91,6 +91,23 @@ a Cowork turn. Verification checks verbatim file hashes, README presence, index 
 list-shaped color tokens when required, and absence of index `editing`/`source` keys.
 CLI result lines include `account` and `skipped`.
 
+### Chat and Cowork surfaces
+
+The artifacts backend detects the surface opened by claude.ai: Cowork uses
+`/cowork/cse_…?artifact=<id>`, while Chat uses `/chat/<conversationUuid>?artifact=<id>`.
+The local index stores `surface` and `chatId` so later iterate/check/status calls use
+the same conversation. Chat reads use the credentials-only conversation API, not CCR.
+Chat submissions are confirmed by increased human-message count; prep tool messages
+before the first human do not count as a turn. Terminal `end_turn`/`stop_sequence`
+messages produce done/no_output according to the artifact signature; `max_tokens` and
+`refusal` are interrupted. Human senders are reported as `user`.
+
+Chat results omit `sessionId` and `costUsd`; existing URL fields point at the Chat
+conversation. No surface/chatId fields are added to strict tool results. Cowork
+result contracts remain unchanged. If creation fails before sending a prompt, the
+artifact id is recovered from the URL even if conversation navigation did not finish,
+and the blank artifact and its local index entry are cleaned up.
+
 ## How it works
 
 - It drives **your own logged-in Chrome** (a dedicated profile) over CDP with

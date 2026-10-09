@@ -2,6 +2,7 @@ import { mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync, rmSync }
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { expandHome } from '../helpers.mjs';
+import { currentAccount } from '../accounts.mjs';
 
 const indexPath = () => path.join(expandHome(process.env.CLAUDE_DESIGN_STATE_DIR || '~/.cache/claude-design-mcp'), 'artifacts-index.json');
 const emptyIndex = () => ({ v: 1, byArtifact: {} });
@@ -9,7 +10,7 @@ const isRecord = (value) => value !== null && typeof value === 'object' && !Arra
 
 function validEntry(value) {
   if (!isRecord(value)) return false;
-  for (const field of ['name', 'sessionId', 'lastSubmitSignature', 'submittedAt']) {
+  for (const field of ['name', 'sessionId', 'lastSubmitSignature', 'submittedAt', 'account']) {
     if (value[field] !== undefined && value[field] !== null && typeof value[field] !== 'string') return false;
   }
   return value.promptCountAtSubmit === undefined || (Number.isInteger(value.promptCountAtSubmit) && value.promptCountAtSubmit >= 0);
@@ -42,7 +43,7 @@ function writeIndex(index) {
 
 export function updateEntry(id, patch) {
   const index = readIndex();
-  const entry = { ...(Object.hasOwn(index.byArtifact, id) ? index.byArtifact[id] : {}), ...patch };
+  const entry = { ...(Object.hasOwn(index.byArtifact, id) ? index.byArtifact[id] : {}), ...patch, account: patch.account ?? currentAccount() };
   if (!validEntry(entry)) throw new TypeError(`Invalid artifacts index entry: ${id}`);
   writeIndex({ v: 1, byArtifact: { ...index.byArtifact, [id]: entry } });
   return entry;
@@ -57,7 +58,7 @@ export function removeEntry(id) {
 
 export function findByName(name) {
   const matches = Object.entries(readIndex().byArtifact)
-    .filter(([, entry]) => typeof entry.name === 'string' && entry.name.normalize('NFC') === name.normalize('NFC'))
+    .filter(([, entry]) => (entry.account ?? 'main') === currentAccount() && typeof entry.name === 'string' && entry.name.normalize('NFC') === name.normalize('NFC'))
     .sort(([, a], [, b]) => (Date.parse(b.submittedAt) || 0) - (Date.parse(a.submittedAt) || 0));
   const match = matches[0];
   return match ? { ...match[1], projectId: match[0] } : null;

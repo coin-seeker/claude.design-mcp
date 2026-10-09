@@ -40,7 +40,13 @@ export function chatIdle(messages) {
   return Boolean(assistant && TERMINAL_STOPS.has(assistant.stop_reason));
 }
 
-export function classifyChatTurn({ messages, signature, submitSignature, now = Date.now(), stallMs = Number(process.env.CLAUDE_DESIGN_STALL_MS || 600_000) }) {
+// The chat API does not expose an in-progress assistant message (it appears only once the turn ends, measured
+// 2026-10-10: a 10m14s design-system turn showed nothing after the prompt until end_turn), and
+// completion_status.is_pending stays false while a turn streams. So a chat turn counts as stalled only after a much
+// longer silence than Cowork; override with CLAUDE_DESIGN_CHAT_STALL_MS.
+const CHAT_STALL_MS = () => Number(process.env.CLAUDE_DESIGN_CHAT_STALL_MS || 1_800_000);
+
+export function classifyChatTurn({ messages, signature, submitSignature, now = Date.now(), stallMs = CHAT_STALL_MS() }) {
   const ordered = chatConversation(messages);
   const base = { lastMessageRole: chatLastMessageRole(messages) };
   const human = ordered.find((message) => message.sender === 'human');

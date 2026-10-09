@@ -34,7 +34,7 @@ export async function artifactsCheck(args = {}, overrides = {}) {
         deps.readChatMessages(scoped, indexed.chatId, deps), deps.readManifest(scoped, projectId),
       ]);
       const signature = await deps.signature(manifest.files);
-      const turn = classifyChatTurn({ messages, signature, submitSignature: indexed.lastSubmitSignature, now: deps.now(), stallMs: deps.stallMs });
+      const turn = classifyChatTurn({ messages, signature, submitSignature: indexed.lastSubmitSignature, now: deps.now(), ...(deps.chatStallMs === undefined ? {} : { stallMs: deps.chatStallMs }) });
       return {
         projectId, backend: 'artifacts', ...turn,
         files: manifest.files.filter(({ path }) => path.startsWith('project/'))

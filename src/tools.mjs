@@ -7,7 +7,7 @@ import { artifactsCreate, artifactsIterate, artifactsEdit, artifactsVariants } f
 import { pullArtifact } from './artifacts/pull.mjs';
 import { resolveDesign } from './artifacts/listing.mjs';
 import { artifactsPreview } from './artifacts/preview.mjs';
-import { artifactsSystemSync } from './artifacts/sync.mjs';
+import { artifactsSystemSync } from './artifacts/ds-sync.mjs';
 
 export { STANDALONE_IMPL };
 export { createPool, variantPrompt, design_create, design_iterate, design_delete, design_variants, findOrCreateProject } from './standalone-tools.mjs';
@@ -40,7 +40,7 @@ const ARTIFACTS_DESCRIPTIONS = {
   design_check: 'Poll the completion state of a pending design generation. API-only (Cowork session + artifact manifest); never opens a page. Returns status: generating | awaiting_input | done | no_output | interrupted | stalled. Permission requests are reported, never auto-approved.',
   design_edit: 'Applies literal edits by running an instructed Cowork turn on Haiku/low (consumes usage) and verifies the result by re-reading the file; opens a background operation page.',
   design_variants: 'Submit multiple design variants of one prompt in parallel (max 3 concurrent), each as its own Design artifact; returns pending projectIds immediately (no preview) — poll each with design_check. designSystem grounds every variant. Grounding is mandatory: pass exactly one of designSystem or withoutDesignSystem: true.',
-  design_system_sync: 'Sync a materialized design-system package directory using Claude Code /design-sync, then migrate it to a Design System artifact. Requires the standalone service for upload; reports artifactId and migration outcome. The package must contain package.json and styles.css.',
+  design_system_sync: 'Create or update a Design System artifact from a materialized package directory (package.json + styles.css) through a Cowork session; never uses standalone claude.ai/design. Consumes usage. Defaults: model sonnet, effort medium, timeoutMs 900000.',
 };
 
 export function buildTools(backend) {

@@ -74,6 +74,35 @@ export async function openNewDesign(page) {
   return { sessionId: match[1], projectId: match[2] };
 }
 
+export async function openNewDesignSystem(page) {
+  await page.goto('https://claude.ai/artifacts/design', { waitUntil: 'domcontentloaded' });
+  await poll(() => page.evaluate(() => {
+    const button = [...document.querySelectorAll('button')].find((element) =>
+      element.getClientRects().length && element.innerText.trim() === 'Design System' && !element.disabled);
+    if (!button) return false;
+    button.click();
+    return true;
+  }), 'New Design System card unavailable');
+  const match = await poll(() => /\/cowork\/(cse_[A-Za-z0-9]+)\?artifact=([0-9a-f-]{36})/i.exec(page.url()), 'New Design System URL unavailable');
+  return { sessionId: match[1], projectId: match[2] };
+}
+
+export async function openDesignSystemChat(page, artifactId) {
+  await page.goto(artifactUrl(artifactId), { waitUntil: 'domcontentloaded' });
+  await clickRequired(page, { selector: 'button[aria-label^="Claude와 채팅"], button[aria-label^="Chat with Claude"]' });
+  const match = await poll(() => {
+    const url = new URL(page.url());
+    return url.searchParams.get('artifact') === artifactId && /^\/cowork\/(cse_[A-Za-z0-9]+)$/.exec(url.pathname);
+  }, 'Design System chat URL unavailable');
+  return { sessionId: match[1], projectId: artifactId };
+}
+
+export async function attachFile(page, filePath, name) {
+  await page.setInputFiles('[data-testid=file-upload]', filePath);
+  await poll(() => page.evaluate((filename) => [...document.querySelectorAll('[data-testid=file-thumbnail]')]
+    .some((element) => element.innerText.includes(filename)), name), `Attachment thumbnail unavailable: ${name}`, 60_000);
+}
+
 export async function openDesignSession(page, sessionId, projectId) {
   await page.goto(artifactUrl(projectId, sessionId), { waitUntil: 'domcontentloaded' });
   await waitForInput(page);

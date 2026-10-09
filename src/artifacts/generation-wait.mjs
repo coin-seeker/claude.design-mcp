@@ -57,6 +57,7 @@ export async function waitForArtifactTurn(scoped, turn, overrides = {}) {
   const timedOut = result.status === 'generating';
   return {
     status: result.status, released: !timedOut, stable: !timedOut,
+    ...(typeof result.costUsd === 'number' ? { costUsd: result.costUsd } : {}),
     hasFiles: result.files.length > 0,
     changed: result.signature !== EMPTY_SIGNATURE && result.signature !== turn.baseline,
     answered: false, ms: deps.now() - started, ...(timedOut ? { timedOut: true } : {}), files: result.files,

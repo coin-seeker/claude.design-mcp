@@ -143,18 +143,14 @@ async function runCli(argv) {
     else if (cmd === 'sync') {
       const { positional, flags } = parseSyncFlags(rest);
       if (!positional[0]) throw new Error('usage: node src/server.mjs sync <dir> [--timeout-ms <ms>]');
-      const synced = await runDesignSync({
+      const { designBackend } = await import('./backend.mjs');
+      const artifacts = designBackend() === 'artifacts';
+      const sync = artifacts ? IMPL.design_system_sync : runDesignSync;
+      const synced = await sync({
         dir: positional[0],
         timeoutMs: flags.timeoutMs,
         onProgress: (line) => send({ type: 'progress', stream: 'claude', text: line.slice(0, 2000) }),
       });
-      const { designBackend } = await import('./backend.mjs');
-      let migrationFields = {};
-      if (designBackend() === 'artifacts' && synced.ok) {
-        const { completeArtifactsSync } = await import('./artifacts/sync.mjs');
-        const completed = await completeArtifactsSync(synced);
-        migrationFields = { artifactId: completed.artifactId, migration: completed.migration };
-      }
       send({
         type: 'result',
         ok: synced.ok,
@@ -165,7 +161,7 @@ async function runCli(argv) {
         flattenError: synced.flattenError ?? null,
         projectId: synced.projectId ?? null,
         url: synced.url ?? null,
-        ...migrationFields,
+        ...(artifacts ? { artifactId: synced.artifactId, sessionId: synced.sessionId, created: synced.created } : {}),
       });
       process.exit(synced.ok ? 0 : 1); // a refused sync must not look like success to the caller
     }

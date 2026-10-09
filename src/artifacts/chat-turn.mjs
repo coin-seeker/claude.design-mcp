@@ -1,5 +1,18 @@
 import { designApiRequest } from './api.mjs';
-import { EMPTY_SIGNATURE } from './turn.mjs';
+import { EMPTY_SIGNATURE, FINISHED_BUCKETS } from './turn.mjs';
+
+export async function findWorkspaceSessionId(scoped, chatId, deps = {}) {
+  const request = deps.designApiRequest ?? designApiRequest;
+  for (let offset = 0; offset < 200; offset += 50) {
+    const path = `/api/organizations/${encodeURIComponent(scoped.org)}/chat_conversations_v2?limit=50&offset=${offset}&archived=false&consistency=strong`;
+    const items = await request(scoped, 'GET', path);
+    if (!Array.isArray(items)) throw new TypeError('Invalid chat conversations page');
+    const chat = items.find((item) => item.uuid === chatId);
+    if (chat) return typeof chat.workspace_session_id === 'string' ? chat.workspace_session_id : null;
+    if (items.length < 50) break;
+  }
+  return null;
+}
 
 export async function readChatMessages(scoped, chatId, overrides = {}) {
   const request = overrides.designApiRequest ?? designApiRequest;
@@ -32,7 +45,8 @@ export function chatLastMessageRole(messages) {
 export const chatPromptCount = (messages) => messages.filter((message) => message.sender === 'human').length;
 const TERMINAL_STOPS = new Set(['end_turn', 'stop_sequence', 'max_tokens', 'refusal']);
 
-export function chatIdle(messages) {
+export function chatIdle(messages, session) {
+  if (session) return session.worker_status === 'idle' && FINISHED_BUCKETS.has(session.status_bucket);
   const ordered = chatConversation(messages);
   const human = ordered.find((message) => message.sender === 'human');
   if (!human) return true;
@@ -46,9 +60,16 @@ export function chatIdle(messages) {
 // longer silence than Cowork; override with CLAUDE_DESIGN_CHAT_STALL_MS.
 const CHAT_STALL_MS = () => Number(process.env.CLAUDE_DESIGN_CHAT_STALL_MS || 1_800_000);
 
-export function classifyChatTurn({ messages, signature, submitSignature, now = Date.now(), stallMs = CHAT_STALL_MS() }) {
+export function classifyChatTurn({ messages, signature, submitSignature, session, now = Date.now(), stallMs = CHAT_STALL_MS(), sessionStallMs = Number(process.env.CLAUDE_DESIGN_STALL_MS || 600_000) }) {
   const ordered = chatConversation(messages);
   const base = { lastMessageRole: chatLastMessageRole(messages) };
+  if (session && !chatIdle(messages, session)) {
+    if (session.requires_action_details_list?.length) {
+      return { ...base, status: 'awaiting_input', requiresAction: session.requires_action_details_list.map(({ type }) => ({ type })) };
+    }
+    const stalled = now - Date.parse(session.last_event_at) > sessionStallMs;
+    return { ...base, status: stalled ? 'stalled' : 'generating' };
+  }
   const human = ordered.find((message) => message.sender === 'human');
   if (!human) return { ...base, status: 'stalled' };
   const assistant = ordered.find((message) => message.sender === 'assistant' && message.index > human.index);
@@ -61,6 +82,12 @@ export function classifyChatTurn({ messages, signature, submitSignature, now = D
     case 'max_tokens':
     case 'refusal': return { ...base, status: 'interrupted', problem: `result_${assistant.stop_reason}` };
     default: {
+      if (session) {
+        // A new prompt may arrive before the previous turn's idle snapshot changes; REST replies also lag.
+        const reference = Math.max(Date.parse(session.last_event_at) || 0, Date.parse(human.created_at) || 0);
+        return now - reference < 60_000 ? { ...base, status: 'generating' }
+          : { ...base, status: 'interrupted', problem: 'idle_without_result' };
+      }
       const stalled = now - Date.parse(ordered[0].updated_at) > stallMs;
       return { ...base, status: stalled ? 'stalled' : 'generating' };
     }

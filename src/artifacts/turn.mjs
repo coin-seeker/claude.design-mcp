@@ -33,7 +33,7 @@ export function lastMessageRole(events) {
 }
 
 const PICKUP_GRACE_MS = 30_000;
-const FINISHED_BUCKETS = new Set(['completed', 'blocked']);
+export const FINISHED_BUCKETS = new Set(['completed', 'blocked', 'review_ready']);
 
 // total_cost_usd is cumulative per session, so a handshake after the first turn carries a non-zero cost;
 // zero turns alone identifies it.

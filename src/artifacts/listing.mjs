@@ -4,6 +4,7 @@ import { readIndex } from './index-store.mjs';
 import { getManifest, projectFiles, artifactSignature } from './manifest.mjs';
 import { listLimit } from '../list-details.mjs';
 import { createPool } from '../variants.mjs';
+import { currentAccount } from '../accounts.mjs';
 
 const READ_DEPS = { frameRequest, resolveTypeSlugs, readIndex, getManifest };
 
@@ -42,7 +43,7 @@ export async function listDesigns(scoped, { limit } = {}, overrides = {}) {
     return {
       projectId: item.id, name: item.title, type: 'PROJECT_TYPE_PROJECT', isOwned: item.rel === 'mine',
       createdAt: toIso(item.created_at), updatedAt, viewedAt: [lastViewed, updatedAt].filter(Boolean).sort().at(-1) || null,
-      sessionId, backend: 'artifacts', url: artifactUrl(item.id, sessionId),
+      sessionId, account: currentAccount(), backend: 'artifacts', url: artifactUrl(item.id, sessionId),
     };
   }).slice(0, listLimit(limit) ?? 100);
 }
@@ -83,7 +84,7 @@ export async function resolveDesign(scoped, { projectId, name } = {}, overrides 
     return { projectId, name: manifest.title, type: 'PROJECT_TYPE_PROJECT', sessionId, backend: 'artifacts', url: artifactUrl(projectId, sessionId) };
   }
   const target = name.normalize('NFC');
-  const found = items.filter((item) => item.name.normalize('NFC') === target)
+  const found = items.filter((item) => (item.account ?? 'main') === currentAccount() && item.name.normalize('NFC') === target)
     .sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0))[0];
   if (!found) throw new Error(`remote project not found by name: ${name}`);
   return found;

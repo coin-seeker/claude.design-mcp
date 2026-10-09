@@ -6,6 +6,7 @@ import { resolveTypeSlugs } from './types.mjs';
 import { removeEntry, readIndex } from './index-store.mjs';
 import { getManifest, resolveFilePath, fetchFileBytes } from './manifest.mjs';
 import { listDesigns, withDesignDetails, resolveSessionId, toIso } from './listing.mjs';
+import { currentAccount } from '../accounts.mjs';
 
 const READ_DEPS = {
   ensureSession, withRpcPage, frameRequest, ccrRequest, resolveTypeSlugs, readIndex, removeEntry,
@@ -51,7 +52,8 @@ export async function artifactsList(args = {}, overrides = {}) {
   const deps = { ...READ_DEPS, ...overrides };
   return onRpc(deps, async (scoped) => {
     const items = await deps.listDesigns(scoped, { limit: args.limit }, deps);
-    return args.details === true ? deps.withDesignDetails(scoped, items, args.detailsFor, deps) : items;
+    const detailed = args.details === true ? await deps.withDesignDetails(scoped, items, args.detailsFor, deps) : items;
+    return detailed.map((item) => ({ ...item, account: currentAccount() }));
   });
 }
 
@@ -91,7 +93,7 @@ export async function artifactsStatus(args = {}, overrides = {}) {
         default: break;
       }
     }
-    return { projectId, chats: 1, messages, lastMessageRole, sessionId, backend: 'artifacts', sessionStatus: session.status, workerStatus: session.worker_status };
+    return { projectId, chats: 1, messages, lastMessageRole, sessionId, account: currentAccount(), backend: 'artifacts', sessionStatus: session.status, workerStatus: session.worker_status };
   });
 }
 
@@ -104,7 +106,7 @@ export async function artifactsSystemList(_args = {}, overrides = {}) {
     return response.instances.map((item) => {
       if (typeof item.title !== 'string' || typeof item.slug !== 'string') throw new TypeError('Invalid Design System instance');
       const publishedAt = toIso(item.published_at);
-      return { name: item.title, id: item.slug, ...(publishedAt ? { publishedAt } : {}), isDefault: item.slug === response.default?.slug };
+      return { name: item.title, id: item.slug, account: currentAccount(), ...(publishedAt ? { publishedAt } : {}), isDefault: item.slug === response.default?.slug };
     });
   });
 }
@@ -127,7 +129,12 @@ export async function artifactsLogin(_args = {}, overrides = {}) {
   while (deps.now() < deadline) {
     try {
       const session = await deps.ensureSession({ visible: true, force: true });
-      return { loggedIn: true, email: null, org: session.org, backend: 'artifacts' };
+      const email = await deps.withRpcPage(session, (page) => page.evaluate(async () => {
+        const response = await fetch('/api/bootstrap', { credentials: 'include', signal: AbortSignal.timeout(30_000) });
+        if (!response.ok) throw new Error(`bootstrap HTTP ${response.status}`);
+        return /"email_address":"([^"]+)"/.exec(await response.text())?.[1] ?? null;
+      }));
+      return { loggedIn: true, email, org: session.org, account: currentAccount(), backend: 'artifacts' };
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       last = error;

@@ -1,9 +1,9 @@
 import { ensureSession } from '../session.mjs';
 import { withRpcPage } from '../operation-pages.mjs';
 import { ccrRequest } from './api.mjs';
-import { readIndex } from './index-store.mjs';
+import { readIndex, updateEntry } from './index-store.mjs';
 import { classifyArtifactTurn, readAllEvents } from './turn.mjs';
-import { readChatMessages, classifyChatTurn } from './chat-turn.mjs';
+import { readChatMessages, classifyChatTurn, findWorkspaceSessionId } from './chat-turn.mjs';
 
 export { readAllEvents } from './turn.mjs';
 
@@ -13,6 +13,8 @@ const CHECK_DEPS = {
   withRpcPage,
   ccrRequest,
   readIndex,
+  updateEntry,
+  findWorkspaceSessionId,
   readAllEvents,
   readChatMessages,
   resolveSessionId: async (scoped, id) => (await import('./listing.mjs')).resolveSessionId(scoped, id),
@@ -34,7 +36,15 @@ export async function artifactsCheck(args = {}, overrides = {}) {
         deps.readChatMessages(scoped, indexed.chatId, deps), deps.readManifest(scoped, projectId),
       ]);
       const signature = await deps.signature(manifest.files);
-      const turn = classifyChatTurn({ messages, signature, submitSignature: indexed.lastSubmitSignature, now: deps.now(), ...(deps.chatStallMs === undefined ? {} : { stallMs: deps.chatStallMs }) });
+      let state;
+      try {
+        const workspaceSessionId = indexed.workspaceSessionId ?? await deps.findWorkspaceSessionId(scoped, indexed.chatId, deps);
+        if (workspaceSessionId) {
+          if (!indexed.workspaceSessionId) deps.updateEntry(projectId, { workspaceSessionId });
+          state = await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(workspaceSessionId)}`);
+        }
+      } catch { /* Session discovery is optional; retain the message-based fallback on any failure. */ }
+      const turn = classifyChatTurn({ messages, signature, session: state, submitSignature: indexed.lastSubmitSignature, now: deps.now(), sessionStallMs: deps.stallMs, ...(deps.chatStallMs === undefined ? {} : { stallMs: deps.chatStallMs }) });
       return {
         projectId, backend: 'artifacts', ...turn,
         files: manifest.files.filter(({ path }) => path.startsWith('project/'))

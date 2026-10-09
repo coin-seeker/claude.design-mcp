@@ -4,7 +4,7 @@ import { designSystemLabel, matchDesignSystem } from '../design-system.mjs';
 import { selectModelCandidate, matchEffortOption } from '../model.mjs';
 import { artifactUrl } from './listing.mjs';
 
-export const PICKER_MISSING = 'Design system picker is unavailable: claude.ai only offers it on an empty Design artifact, so pass designSystem on design_create (a new artifact) rather than on one that already holds a design.';
+export const PICKER_MISSING = 'Design system picker is unavailable in this Cowork composer, so the design system cannot be (re)selected for this turn. Omit designSystem, or start a new artifact with design_create.';
 const MODEL = '[data-testid=model-selector-dropdown]';
 // Base UI keeps a closed popup mounted (data-closed) while its exit animation is pending, and a
 // background tab never finishes that animation, so only items of an open popup (data-open) count.

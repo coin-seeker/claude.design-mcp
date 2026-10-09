@@ -23,8 +23,8 @@ without navigating the project page or automatically approving permission reques
 
 | Status | Artifacts meaning |
 |---|---|
-| `awaiting_input` | Session requires action; returns `requiresAction` types for the user |
-| `done` | Successful result after the latest real prompt, with non-empty output changed from the submission baseline (or no known baseline) |
+| `awaiting_input` | Session requires action (`requiresAction` types), or the turn ended in bucket `blocked` with no new output (`problem: "need_input: <Claude's question>"`) |
+| `done` | Successful result after the latest real prompt, with non-empty output changed from the submission baseline (or no known baseline); a `blocked` bucket adds `problem: "need_input: …"` |
 | `no_output` | Successful result, but empty output or the same signature as the baseline |
 | `interrupted` | Error/non-success result, or an idle completed worker with a prompt but no result |
 | `generating` | Worker is active and its latest event is within the stall threshold |
@@ -32,7 +32,9 @@ without navigating the project page or automatically approving permission reques
 
 Artifacts checks return `checkPath: "artifacts"`, `answeredQuestions: false`, and never
 auto-resume; `resume_exhausted` belongs only to the standalone backend. Tool-result user
-events are not real prompts. `CLAUDE_DESIGN_STALL_MS` defaults to `600000` (10 minutes).
+events and composer echoes (`<local-command-stdout>Set model…`) are not real prompts; zero-turn
+`result` events are session handshakes. A worker counts as finished when it is idle in bucket
+`completed` or `blocked`. `costUsd` is the turn's cost (session `total_cost_usd` delta). `CLAUDE_DESIGN_STALL_MS` defaults to `600000` (10 minutes).
 
 Artifacts pulls strip the manifest's `project/` prefix, write the Design runtime as
 `support.js` next to each `*.dc.html`, download referenced assets into `_blob/`, and rewrite
@@ -42,7 +44,7 @@ and keep their original references. Zip pulls archive the same layout. Default p
 Signatures hash sorted, prefix-stripped `path:sha256` pairs for `project/` files only.
 
 **`design_edit` consumes usage**: there is no artifacts file-write API. It runs an
-instructed Cowork turn in a background operation page, requires each old string to occur
+instructed Haiku/low Cowork turn (about $0.03 in live QA) in a background operation page, requires each old string to occur
 exactly once, then re-reads the file to verify the literal edits. It is not a direct RPC edit.
 
 `design_system_sync` still uploads through the **standalone** Claude Code `/design-sync`
@@ -242,6 +244,10 @@ frontmost tab. Generation still uses its composer page.
   call history. The CLI equivalent is `create --without-design-system`; `iterate` rejects that
   flag as unknown. `design_iterate` is deliberately **not** gated: a project that already holds a
   design no longer offers the picker, so there is nothing to choose there.
+- Artifacts backend: the Cowork composer offers the picker even after a design exists, so
+  `designSystem` on `design_iterate` (and on a name-reused `design_create`) re-selects the system
+  for that turn; it errors only if no picker is shown. `design_variants` submits every variant with
+  `wait: false` and returns pending ids without previews — poll each with `design_check`.
 - `design_variants` forces `fresh: true` on every project it creates. Each variant is named
   `<base>-v<N>`, and without `fresh` a rerun would reuse the same-named project from an earlier
   fan-out — a project that already holds a design, where the design system can no longer attach.

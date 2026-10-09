@@ -138,5 +138,8 @@ export async function artifactsVariants(args = {}, overrides = {}) {
   assertDesignSystemChoice(args);
   const create = overrides.artifactsCreate ?? artifactsCreate;
   const preview = overrides.artifactsPreview ?? (async (input) => (await import('./preview.mjs')).artifactsPreview(input, overrides));
-  return generateVariants(args, { create: (input) => create(input, overrides), preview, concurrency: overrides.concurrency });
+  // Variants submit and return pending ids, like design_create(wait:false): blocking until every
+  // generation finished outlived the MCP client timeout in live QA. Poll each id with design_check;
+  // there is nothing to preview yet.
+  return generateVariants({ ...args, preview: false }, { create: (input) => create({ ...input, wait: false }, overrides), preview, concurrency: overrides.concurrency });
 }

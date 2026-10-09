@@ -3,6 +3,8 @@ import { artifactsIterate } from './generate.mjs';
 
 const occurrences = (text, literal) => literal ? text.split(literal).length - 1 : text.length + 1;
 
+// A literal replacement needs no reasoning: Haiku keeps the turn cheap (Opus cost $0.44 in live QA) and
+// the post-turn re-read still proves the edit.
 export async function artifactsEdit(args = {}, overrides = {}) {
   const deps = { artifactsGet, artifactsIterate, ...overrides };
   if (!Array.isArray(args.edits) || !args.edits.length) throw new Error('edits must be a non-empty array');
@@ -20,7 +22,7 @@ export async function artifactsEdit(args = {}, overrides = {}) {
     return `${index + 1}. REPLACE:\n<<<\n${oldString}\n>>>\nWITH:\n<<<\n${newString}\n>>>`;
   });
   const prompt = `Apply exactly these literal replacements to the project file ${args.path} and change nothing else. Do not create or delete files.\n${blocks.join('\n\n')}`;
-  const turn = await deps.artifactsIterate({ projectId: args.projectId, prompt, effort: 'low', wait: true, timeoutMs: 240_000 }, deps);
+  const turn = await deps.artifactsIterate({ projectId: args.projectId, prompt, model: 'haiku', effort: 'low', wait: true, timeoutMs: 240_000 }, deps);
   const after = await deps.artifactsGet({ projectId: args.projectId, path: args.path }, deps);
   if (typeof after.text !== 'string') throw new Error('design_edit verification failed: file is no longer text');
   // Exact match with the locally applied edits is the strongest proof; otherwise (Claude re-serialised

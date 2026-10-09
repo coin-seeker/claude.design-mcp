@@ -3,7 +3,7 @@ import { currentAccount } from '../accounts.mjs';
 import { ensureSession } from '../session.mjs';
 import { withOperationPage, withRpcPage } from '../operation-pages.mjs';
 import { resolveOptionalModel, resolveEffort } from '../model.mjs';
-import { frameRequest, frameFileUrl } from './api.mjs';
+import { frameRequest, frameFileUrl, ccrRequest } from './api.mjs';
 import { getManifest, projectFiles, artifactSignature, fetchFileBytes } from './manifest.mjs';
 import { artifactsSystemList } from './read-tools.mjs';
 import { updateEntry, removeEntry, readIndex } from './index-store.mjs';
@@ -17,7 +17,7 @@ import { artifactIdFromUrl } from './surface.mjs';
 import { readChatMessages, chatPromptCount, findWorkspaceSessionId } from './chat-turn.mjs';
 
 const SYNC_DEPS = {
-  ensureSession, withOperationPage, withRpcPage, frameRequest, getManifest, projectFiles, artifactSignature,
+  ensureSession, withOperationPage, withRpcPage, frameRequest, ccrRequest, getManifest, projectFiles, artifactSignature,
   fetchFileBytes, artifactsSystemList, updateEntry, removeEntry, readIndex, readAllEvents, readChatMessages, findWorkspaceSessionId, confirmSubmitted, waitForArtifactTurn,
   readPackage, zipPackage, verbatimFiles, buildSyncPrompt, verifySync, openNewDesignSystem, openDesignSystemChat,
   waitForInput, applyModelArtifacts, applyEffortArtifacts, attachFile, sendPrompt, now: Date.now,
@@ -126,6 +126,7 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
         const projectId = opened?.projectId ?? artifactIdFromUrl(page.url?.());
         if (!target && projectId && !sent) {
           await deps.frameRequest(scoped, 'DELETE', `/api/frame/${encodeURIComponent(projectId)}`).catch(() => {});
+          if (opened?.sessionId) await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(opened.sessionId)}`, 'DELETE').catch(() => {});
           try { deps.removeEntry(projectId); } catch { /* Preserve the sync failure if local cleanup fails. */ }
         }
         throw error;

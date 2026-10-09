@@ -52,9 +52,11 @@ export function frameRequest(scoped, method, pathAndQuery, body) {
   });
 }
 
-export async function ccrRequest(scoped, path) {
+// Non-GET calls send an empty JSON body, as the web app does for DELETE /v1/code/sessions/<cse>.
+export async function ccrRequest(scoped, path, method = 'GET') {
   const result = await request(scoped, path, {
-    method: 'GET',
+    method,
+    ...(method === 'GET' ? {} : { body: {} }),
     headers: {
       'anthropic-beta': 'ccr-byoc-2025-07-29',
       'anthropic-version': '2023-06-01',

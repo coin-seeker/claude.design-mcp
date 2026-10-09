@@ -98,6 +98,8 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       const projectId = created?.projectId ?? artifactIdFromUrl(page.url?.());
       if (projectId && !sent) {
         await deps.frameRequest(scoped, 'DELETE', `/api/frame/${encodeURIComponent(projectId)}`).catch(() => {});
+        // Deleting the artifact leaves its Cowork session active in the sidebar; the web app deletes it separately.
+        if (created?.sessionId) await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(created.sessionId)}`, 'DELETE').catch(() => {});
         try { deps.removeEntry(projectId); } catch { /* Preserve the original failure on cleanup errors. */ }
       }
       throw error;

@@ -14,7 +14,8 @@ export function toIso(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-export function artifactUrl(projectId, sessionId) {
+export function artifactUrl(projectId, sessionId, chatId) {
+  if (chatId) return `https://claude.ai/chat/${encodeURIComponent(chatId)}?artifact=${encodeURIComponent(projectId)}`;
   return sessionId
     ? `https://claude.ai/cowork/${encodeURIComponent(sessionId)}?artifact=${encodeURIComponent(projectId)}`
     : `https://claude.ai/code/artifact/${encodeURIComponent(projectId)}`;
@@ -40,10 +41,11 @@ export async function listDesigns(scoped, { limit } = {}, overrides = {}) {
     const updatedAt = toIso(item.updated_at);
     const lastViewed = viewed.get(item.id);
     const sessionId = item.last_edit?.cowork?.[0] || index.byArtifact[item.id]?.sessionId || null;
+    const entry = index.byArtifact[item.id];
     return {
       projectId: item.id, name: item.title, type: 'PROJECT_TYPE_PROJECT', isOwned: item.rel === 'mine',
       createdAt: toIso(item.created_at), updatedAt, viewedAt: [lastViewed, updatedAt].filter(Boolean).sort().at(-1) || null,
-      sessionId, account: currentAccount(), backend: 'artifacts', url: artifactUrl(item.id, sessionId),
+      ...(entry?.surface === 'chat' ? {} : { sessionId }), account: currentAccount(), backend: 'artifacts', url: artifactUrl(item.id, sessionId, entry?.chatId),
     };
   }).slice(0, listLimit(limit) ?? 100);
 }
@@ -80,8 +82,9 @@ export async function resolveDesign(scoped, { projectId, name } = {}, overrides 
     const found = items.find((item) => item.projectId === projectId);
     if (found) return found;
     const manifest = await deps.getManifest(scoped, projectId, deps);
-    const sessionId = deps.readIndex().byArtifact[projectId]?.sessionId || null;
-    return { projectId, name: manifest.title, type: 'PROJECT_TYPE_PROJECT', sessionId, backend: 'artifacts', url: artifactUrl(projectId, sessionId) };
+    const entry = deps.readIndex().byArtifact[projectId];
+    const sessionId = entry?.sessionId || null;
+    return { projectId, name: manifest.title, type: 'PROJECT_TYPE_PROJECT', ...(entry?.surface === 'chat' ? {} : { sessionId }), backend: 'artifacts', url: artifactUrl(projectId, sessionId, entry?.chatId) };
   }
   const target = name.normalize('NFC');
   const found = items.filter((item) => (item.account ?? 'main') === currentAccount() && item.name.normalize('NFC') === target)

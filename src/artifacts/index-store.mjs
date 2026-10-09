@@ -10,7 +10,7 @@ const isRecord = (value) => value !== null && typeof value === 'object' && !Arra
 
 function validEntry(value) {
   if (!isRecord(value)) return false;
-  for (const field of ['name', 'sessionId', 'lastSubmitSignature', 'submittedAt', 'account']) {
+  for (const field of ['name', 'sessionId', 'chatId', 'surface', 'lastSubmitSignature', 'submittedAt', 'account']) {
     if (value[field] !== undefined && value[field] !== null && typeof value[field] !== 'string') return false;
   }
   return value.promptCountAtSubmit === undefined || (Number.isInteger(value.promptCountAtSubmit) && value.promptCountAtSubmit >= 0);

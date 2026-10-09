@@ -7,10 +7,11 @@ import { removeEntry, readIndex } from './index-store.mjs';
 import { getManifest, resolveFilePath, fetchFileBytes } from './manifest.mjs';
 import { listDesigns, withDesignDetails, resolveSessionId, toIso } from './listing.mjs';
 import { currentAccount } from '../accounts.mjs';
+import { readChatMessages, chatConversation, chatLastMessageRole } from './chat-turn.mjs';
 
 const READ_DEPS = {
   ensureSession, withRpcPage, frameRequest, ccrRequest, resolveTypeSlugs, readIndex, removeEntry,
-  getManifest, fetchFileBytes, listDesigns, withDesignDetails, resolveSessionId, readAllEvents, delay, now: Date.now,
+  getManifest, fetchFileBytes, listDesigns, withDesignDetails, resolveSessionId, readAllEvents, readChatMessages, delay, now: Date.now,
 };
 
 function requireString(value, name) {
@@ -77,6 +78,12 @@ export async function artifactsStatus(args = {}, overrides = {}) {
   const deps = { ...READ_DEPS, ...overrides };
   const projectId = requireString(args.projectId, 'projectId');
   return onRpc(deps, async (scoped) => {
+    const entry = deps.readIndex().byArtifact[projectId];
+    if (entry?.surface === 'chat' && entry.chatId) {
+      const messages = await deps.readChatMessages(scoped, entry.chatId, deps);
+      return { projectId, chats: 1, messages: chatConversation(messages).length, lastMessageRole: chatLastMessageRole(messages),
+        account: currentAccount(), backend: 'artifacts', sessionStatus: null, workerStatus: null };
+    }
     const sessionId = await deps.resolveSessionId(scoped, projectId, deps);
     if (!sessionId) throw new Error(`no Cowork session found for artifact ${projectId}`);
     const [session, events] = await Promise.all([

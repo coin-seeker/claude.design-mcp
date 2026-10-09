@@ -3,22 +3,21 @@ import { mkdir } from 'node:fs/promises';
 
 import { chromium as playwrightChromium } from 'playwright-core';
 
-import { expandHome } from './helpers.mjs';
+import { ACCOUNTS, currentAccount } from './accounts.mjs';
 import { cookieOrgExpression, omelette } from './rpc.mjs';
 import { designBackend, homeUrl } from './backend.mjs';
 
 export { holdOperationPage, isHeldOperationPage, withOperationPage, withProjectOperationPage, withRpcPage, hasHeldProjectPage } from './operation-pages.mjs';
 
-const DEFAULT_PROFILE = '~/.cache/claude-design-mcp/chrome-profile';
 const DEFAULT_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DESIGN_URL = 'https://claude.ai/design';
 const CF_TEXT = /just a moment|checking your browser|attention required|잠시만/i;
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const profileDir = () => expandHome(process.env.CLAUDE_DESIGN_PROFILE || DEFAULT_PROFILE);
+export const profileDir = () => ACCOUNTS[currentAccount()].profile;
 export const chromeBin = () => process.env.CLAUDE_DESIGN_CHROME || DEFAULT_CHROME;
-export const cdpPort = () => Number(process.env.CLAUDE_DESIGN_CDP_PORT || 9377);
+export const cdpPort = () => ACCOUNTS[currentAccount()].port;
 export const launchTimeout = () => Number(process.env['CLAUDE_DESIGN_LAUNCH_TIMEOUT_MS'] || 15_000);
 export const readyTimeout = () => Number(process.env.CLAUDE_DESIGN_READY_TIMEOUT_MS || 45_000);
 
@@ -169,16 +168,18 @@ export async function pageFromBrowser(browser, deps = { createPage: createBackgr
   return existing ?? deps.createPage(browser);
 }
 
-let cachedSession = null;
+const cachedSessions = new Map();
 
 function sessionAlive(session) {
   return session.browser.isConnected?.() !== false && session.page.isClosed?.() !== true;
 }
 
 export async function ensureSession({ visible = false, force = false, fetchImpl = fetch, chromium = playwrightChromium, connect = null } = {}) {
+  const account = currentAccount();
+  const cachedSession = cachedSessions.get(account);
   if (cachedSession && !force) {
     if (sessionAlive(cachedSession)) return cachedSession;
-    cachedSession = null;
+    cachedSessions.delete(account);
   }
   const port = cdpPort();
   try {
@@ -190,11 +191,12 @@ export async function ensureSession({ visible = false, force = false, fetchImpl 
       : await chromium.connectOverCDP(cdpUrl, connectOptions);
     const page = await pageFromBrowser(browser);
     const ready = await waitForReady(page);
-    cachedSession = { browser, page, org: ready.org, me: ready.me };
+    const session = { browser, page, org: ready.org, me: ready.me };
+    cachedSessions.set(account, session);
     browser.once('disconnected', () => {
-      if (cachedSession?.browser === browser) cachedSession = null;
+      if (cachedSessions.get(account)?.browser === browser) cachedSessions.delete(account);
     });
-    return cachedSession;
+    return session;
   } catch (error) {
     if (error instanceof NotLoggedInError) throw error;
     const detail = error instanceof Error ? error.message : String(error);

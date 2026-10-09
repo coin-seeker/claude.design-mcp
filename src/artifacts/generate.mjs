@@ -12,14 +12,14 @@ import { readAllEvents, isRealPrompt, EMPTY_SIGNATURE } from './turn.mjs';
 import * as composer from './composer.mjs';
 import { confirmSubmitted, holdUntilSettled, waitForArtifactTurn } from './generation-wait.mjs';
 import { artifactIdFromUrl } from './surface.mjs';
-import { readChatMessages, chatPromptCount, chatIdle } from './chat-turn.mjs';
+import { readChatMessages, chatPromptCount, chatIdle, findWorkspaceSessionId } from './chat-turn.mjs';
 
 export { confirmSubmitted, holdUntilSettled } from './generation-wait.mjs';
 export { artifactsEdit } from './edit.mjs';
 
 const FLOW_DEPS = {
   ensureSession, withOperationPage, withRpcPage, frameRequest, ccrRequest,
-  findByName, updateEntry, removeEntry, readIndex, readChatMessages, resolveDesign, resolveSessionId, getManifest, artifactSignature,
+  findByName, updateEntry, removeEntry, readIndex, readChatMessages, findWorkspaceSessionId, resolveDesign, resolveSessionId, getManifest, artifactSignature,
   readAllEvents, ...composer, confirmSubmitted, holdUntilSettled, waitForArtifactTurn, now: Date.now,
   artifactsIterate,
 };
@@ -88,7 +88,9 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       await deps.sendPrompt(page, prompt);
       sent = true;
       await deps.confirmSubmitted(scoped, created.surface === 'chat' ? created : sessionId, 0, deps);
-      deps.updateEntry(projectId, { lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: 1 });
+      const workspaceSessionId = created.surface === 'chat'
+        ? await deps.findWorkspaceSessionId(scoped, created.chatId, deps).catch(() => null) : null;
+      deps.updateEntry(projectId, { ...(workspaceSessionId ? { workspaceSessionId } : {}), lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: 1 });
       const echo = system.name ? { designSystem: system.name } : designSystemChoiceEcho(choice);
       const result = await finishTurn(page, scoped, { ...created, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 360_000) }, deps);
       return { ...result, name };
@@ -115,7 +117,11 @@ export async function artifactsIterate(args = {}, overrides = {}) {
   const sessionId = await deps.withRpcPage(session, async (page) => {
     const scoped = { ...session, page };
     if (chat) {
-      if (!chatIdle(await deps.readChatMessages(scoped, chat.chatId, deps))) throw new Error(`a turn is still running on ${projectId}; poll design_check first`);
+      let state;
+      try {
+        if (entry.workspaceSessionId) state = await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(entry.workspaceSessionId)}`);
+      } catch { /* Fall back to terminal chat messages if the backing session is unavailable. */ }
+      if (!chatIdle(await deps.readChatMessages(scoped, chat.chatId, deps), state)) throw new Error(`a turn is still running on ${projectId}; poll design_check first`);
       return null;
     }
     const id = await deps.resolveSessionId(scoped, projectId, deps);
@@ -139,7 +145,9 @@ export async function artifactsIterate(args = {}, overrides = {}) {
       : (await deps.readAllEvents(scoped, sessionId, deps)).filter(isRealPrompt).length;
     await deps.sendPrompt(page, prompt);
     await deps.confirmSubmitted(scoped, chat ?? sessionId, before, deps);
-    deps.updateEntry(projectId, { sessionId, ...(chat ? { surface: chat.surface, chatId: chat.chatId } : {}), lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: before + 1 });
+    const workspaceSessionId = chat ? entry.workspaceSessionId
+      ?? await deps.findWorkspaceSessionId(scoped, chat.chatId, deps).catch(() => null) : null;
+    deps.updateEntry(projectId, { sessionId, ...(chat ? { surface: chat.surface, chatId: chat.chatId } : {}), ...(workspaceSessionId ? { workspaceSessionId } : {}), lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: before + 1 });
     return finishTurn(page, scoped, { projectId, sessionId, ...chat, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 240_000) }, deps);
   });
 }

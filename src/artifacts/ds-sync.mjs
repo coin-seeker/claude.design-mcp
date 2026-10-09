@@ -14,11 +14,11 @@ import { waitForArtifactTurn } from './generation-wait.mjs';
 import { readPackage, zipPackage, verbatimFiles, buildSyncPrompt, verifySync } from './ds-package.mjs';
 import { openNewDesignSystem, openDesignSystemChat, waitForInput, applyModelArtifacts, applyEffortArtifacts, attachFile, sendPrompt } from './composer.mjs';
 import { artifactIdFromUrl } from './surface.mjs';
-import { readChatMessages, chatPromptCount } from './chat-turn.mjs';
+import { readChatMessages, chatPromptCount, findWorkspaceSessionId } from './chat-turn.mjs';
 
 const SYNC_DEPS = {
   ensureSession, withOperationPage, withRpcPage, frameRequest, getManifest, projectFiles, artifactSignature,
-  fetchFileBytes, artifactsSystemList, updateEntry, removeEntry, readIndex, readAllEvents, readChatMessages, confirmSubmitted, waitForArtifactTurn,
+  fetchFileBytes, artifactsSystemList, updateEntry, removeEntry, readIndex, readAllEvents, readChatMessages, findWorkspaceSessionId, confirmSubmitted, waitForArtifactTurn,
   readPackage, zipPackage, verbatimFiles, buildSyncPrompt, verifySync, openNewDesignSystem, openDesignSystemChat,
   waitForInput, applyModelArtifacts, applyEffortArtifacts, attachFile, sendPrompt, now: Date.now,
 };
@@ -106,7 +106,9 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
           await deps.sendPrompt(page, prompt);
           sent = true;
           await deps.confirmSubmitted(scoped, opened.surface === 'chat' ? opened : sessionId, before, deps);
-          deps.updateEntry(projectId, { name: title, sessionId, ...(opened.surface ? { surface: opened.surface, chatId: opened.chatId } : {}), lastSubmitSignature: baseline,
+          const workspaceSessionId = opened.surface === 'chat'
+            ? await deps.findWorkspaceSessionId(scoped, opened.chatId, deps).catch(() => null) : null;
+          deps.updateEntry(projectId, { name: title, sessionId, ...(opened.surface ? { surface: opened.surface, chatId: opened.chatId } : {}), ...(workspaceSessionId ? { workspaceSessionId } : {}), lastSubmitSignature: baseline,
             submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: before + 1 });
           const settled = await deps.waitForArtifactTurn(scoped, { ...opened, baseline, timeoutMs }, deps);
           result = { ...result, status: settled.status,

@@ -4,12 +4,68 @@ An MCP that drives the **real** [Claude Design](https://claude.ai/artifacts/desi
 editor/agent — log in once, then **create**, **iterate on**, and **pull** designs that
 Claude Design generates **on your own account** (not a local imitation).
 
+## Migrating from standalone Claude Design (closes 2026-12-14)
+
+Version **0.9.2** uses claude.ai **Design artifacts**, backed by a Cowork session or
+Chat conversation, rather than the retiring standalone `claude.ai/design` service.
+`projectId` is now the artifact UUID; old standalone ids are not interchangeable.
+Legacy standalone projects remain available as **local pulls**, not automatically
+converted artifacts. Only the `CLAUDE_DESIGN_BACKEND=standalone` rollback and legacy
+`/design/p/` links still depend on that service.
+
+The migration progressed in these releases:
+
+- **0.7.0:** artifacts became the default backend. Six design systems were migrated
+  on 2026-10-09, then re-synced through the artifacts-native path.
+- **0.8.0:** `design_system_sync` attaches a package zip to a Design System Cowork
+  session (now also Chat), publishes an artifact and verifies SHA-256 file hashes.
+  No standalone upload, migration API or Claude Code `/design-sync` is involved.
+  Preserve `.design-sync/config.json`: `artifactId` pins main and `artifactIds.sub`
+  pins sub. Sync reads these pins but never writes them. A verified precheck skips
+  the generation turn; see [Design-system sync](#design-system-sync).
+- **0.8.1:** all generation paths default to **Opus 5.5 / extra**, including edit
+  and design-system sync.
+- **0.9.0:** optional `account: "main" | "sub"` isolates sub in `chrome-profile-sub`
+  on CDP `9378`; project-id follow-ups resolve the account from the local index.
+  Sub is opt-in only. Chat surfaces (`/chat/<uuid>?artifact=<id>`) are also supported.
+- **0.9.1:** Chat live status uses the conversation list's `workspace_session_id`
+  to read the backing session; idle `review_ready` is a finished bucket alongside
+  `completed` and `blocked`. Message-based checks remain the discovery-failure fallback.
+- **0.9.2:** artifacts-only tool metadata is concise; standalone metadata is unchanged.
+
+## Using it from OpenCode (claude-design skill)
+
+The MCP supplies tools; the OpenCode `claude-design` skill supplies the workflow.
+Load `~/.config/opencode/skills/claude-design/SKILL.md` and the references it directs
+you to. The `claude-design-worker` subagent owns waiting generation/sync work and
+returns a text report, leaving the parent free to continue other work.
+
+**Design-system first:** discover a synced system before generating. `design_create`
+and `design_variants` require exactly one of `designSystem` or
+`withoutDesignSystem: true`; intentional opt-outs may include
+`withoutDesignSystemReason`. Do not silently generate an ungrounded brand design.
+
+Typical skill-driven flow:
+
+1. Worker submits `design_create({prompt, designSystem, wait:false})`.
+2. Worker polls `design_check({projectId})`; report permission/input requests rather
+   than approving them automatically.
+3. On `done`, call `design_pull({projectId})` **without `dir` or `zip`**. The skill's
+   dashboard-registration gate uses this default pull and its history/revision record.
+4. Review locally, then `design_iterate({projectId, prompt, wait:false})`, check and
+   default-pull again. This is the skill policy; raw MCP create/iterate default to `wait:true`.
+
+Use `account:"sub"` only when explicitly requested; omit it otherwise. Subsequent
+project-id calls inherit the indexed account, while name-based calls need an explicit
+account for sub. Defaults are **Opus 5.5 / extra**. Generation consumes usage;
+`design_edit` also runs a turn rather than a free file-write RPC, and sync consumes
+a turn unless its precheck skips (a corrective sync turn consumes more usage).
+
 ## Backends
 
-Version **0.9.1** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
-artifact + Cowork session**. Set `CLAUDE_DESIGN_BACKEND=standalone` to use the unchanged
-`claude.ai/design` service, which remains selectable until it closes on **2026-12-14**.
-Tool names and input schemas are identical; the backend is selected on each call.
+`CLAUDE_DESIGN_BACKEND=artifacts` is the default; `standalone` is the legacy rollback.
+Tool names and structural input schemas are identical (descriptions differ);
+the backend is selected on each call.
 An invalid backend value rejects calls, but does not prevent initialization or tool listing.
 
 For artifacts, `projectId` is the artifact UUID, `sessionId` is the Cowork `cse_…` id,
@@ -43,15 +99,9 @@ and keep their original references. Zip pulls archive the same layout. Default p
 (no explicit `dir` or `zip`) still create revision snapshots, including runtime and blobs.
 Signatures hash sorted, prefix-stripped `path:sha256` pairs for `project/` files only.
 
-**`design_edit` consumes usage**: there is no artifacts file-write API. It runs an
-instructed Cowork turn (default Opus 5.5 / extra, like every generation) in a background operation page, requires each old string to occur
+**`design_edit`** has no artifacts file-write API. It runs an
+instructed Cowork/chat turn in a background operation page, requires each old string to occur
 exactly once, then re-reads the file to verify the literal edits. It is not a direct RPC edit.
-
-**`design_system_sync` is artifacts-native and consumes usage.** It attaches a package zip
-to a Design System Cowork session, creates or revises the artifact, then verifies the
-published files. It never uses the standalone service, Claude Code `/design-sync`, or a
-migration API. Defaults are `model: "opus-5.5"`, `effort: "extra"`, `timeoutMs: 900000`.
-See [Design-system sync](#design-system-sync) for title preservation, pins and verification.
 
 The local artifact/session index is
 `~/.cache/claude-design-mcp/artifacts-index.json`; override its directory with
@@ -211,7 +261,7 @@ failures are non-fatal in the same way: `revision: null` plus an stderr warning,
 ### Focus-free reads
 
 `design_list`, `design_pull`, `design_get`, `design_status`, `design_preview`, and
-`design_system_list` run RPCs without opening, focusing, or navigating a visible tab.
+`design_system_list` run background APIs without focusing or navigating a visible tab.
 `design_delete` uses the same background API path but **changes remote data**.
 `design_edit` opens an operation page for a Cowork turn (standalone: focus-free RPC).
 `design_preview` renders with a separate headless browser by default. Artifacts
@@ -268,9 +318,9 @@ frontmost tab. Generation still uses its composer page.
 
 - `design_create`, `design_iterate`, and `design_variants` accept an optional `model`.
   Use a family (`opus`, `sonnet`, `haiku`, or `fable`) to select that family's newest
-  version from the live claude.ai/design menu. Pin a version with forms such as
+  version from the live composer menu. Pin a version with forms such as
   `opus-5.5`, `opus-5`, `opus 5.0`, `claude-opus-5-5`, or
-  `anthropic/claude-opus-5-5`. Without `model` the server defaults to `opus-5.5`
+  `anthropic/claude-opus-5-5`. Without `model` the server defaults to `opus-5.5`.
   New family versions become available automatically when
   they appear in the site menu. If a requested version is unavailable, the error lists
   the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
@@ -278,20 +328,15 @@ frontmost tab. Generation still uses its composer page.
   `extra`, or `max`, matching the composer's Effort menu (`xhigh` is an alias of `extra`).
   Without `effort` every generation uses `extra`. If the composer cannot be set to the effort
   (explicit or default) the call fails before the prompt is sent, with the live options in the
-  error. A page reload resets the composer to Medium, so the effort is re-applied right before
-  every submit and also before the follow-up turns the server starts itself: the clarifying-question
-   standalone form's Continue (skipped, leaving `awaiting_input`, if the effort cannot be set) and the
-   standalone interruption Resume in `design_check`. Those use the project's last requested effort in this
-  server process, else `extra`. CLI: `--effort <value>`.
+  error. Effort is applied before submission. CLI: `--effort <value>`.
 - `design_create`, `design_iterate`, and `design_variants` accept a `designSystem`
   (CLI `--design-system`), the name of one of the account design systems reported by
   `design_system_list`. It is matched case-insensitively, an unambiguous partial name works,
   and an unknown name errors with the list the composer offers. The chosen system replaces the
-  org default rather than adding to it, and the result echoes the resolved name. claude.ai only
-  offers the picker **while a project has produced no design yet**, so `designSystem` belongs on
-  `design_create`; on `design_iterate` it works only for such a project and otherwise errors
-  instead of silently ignoring the request. `design_variants` grounds every variant in the same
-  system.
+  org default rather than adding to it, and the result echoes the resolved name.
+  Artifacts reselect the system on each requested turn, including iterate and name reuse;
+  the call errors if no picker is shown. The legacy standalone picker works only before
+  a project has produced a design. `design_variants` grounds every variant in the same system.
 - **Grounding is mandatory on `design_create` and `design_variants`.** Each call must carry
   exactly one of a non-blank `designSystem` or `withoutDesignSystem: true` (the boolean `true`,
   not `"true"` or `1`) — never both, never neither. A violation is refused with one fixed message
@@ -302,15 +347,12 @@ frontmost tab. Generation still uses its composer page.
   errors. An opt-out may carry a free-text `withoutDesignSystemReason`, which is only valid
   together with `withoutDesignSystem: true`; both are echoed in the result and recorded in the
   call history. The CLI equivalent is `create --without-design-system`; `iterate` rejects that
-  flag as unknown. `design_iterate` is deliberately **not** gated: a project that already holds a
-  design no longer offers the picker, so there is nothing to choose there.
-- Artifacts backend: the Cowork composer offers the picker even after a design exists, so
-  `designSystem` on `design_iterate` (and on a name-reused `design_create`) re-selects the system
-  for that turn; it errors only if no picker is shown. `design_variants` submits every variant with
+  flag as unknown. `design_iterate` is deliberately **not** grounding-gated.
+- Artifacts `design_variants` submits every variant with
   `wait: false` and returns pending ids without previews — poll each with `design_check`.
 - `design_variants` forces `fresh: true` on every project it creates. Each variant is named
   `<base>-v<N>`, and without `fresh` a rerun would reuse the same-named project from an earlier
-  fan-out — a project that already holds a design, where the design system can no longer attach.
+  fan-out instead of producing independent variants.
 - `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
    to return after a confirmed Cowork submission (standalone: verified `Chat` POST and bounded question-form watch) with
   `{ submitted: true, pending: true }`; the CLI equivalent is `--no-wait`. A click or
@@ -320,25 +362,10 @@ frontmost tab. Generation still uses its composer page.
   `reused: true`, so repeated calls iterate one project instead of piling up duplicates.
   Pass `fresh: true` to force a new project. Without `name` (prompt-derived name), every
   call creates a new project as before.
-- Poll submitted work with `design_check({ projectId })`, or
-  `node src/server.mjs check <projectId>`. Its `status` is `generating`,
-  `awaiting_input`, `done`, `no_output`, `interrupted`, `stalled`, or `resume_exhausted`. Each check reuses the
-   held owner page **on standalone only** while a turn is active (without reloading it), answers a question form when possible, and automatically clicks the
-  interrupted banner's `Resume` button. `interrupted` means the banner was present but
-  could not be resumed; `stalled` means the file tree was stable with no generated files
-  and the last message was still the user's prompt. `resume_exhausted` is terminal after
-  three consecutive Resume attempts and includes `resumeAttempts`, `maxResumeAttempts`,
-  and `problem: "resume_attempts_exhausted"`. `_ds/**` design-system material is not counted
-  as generated output.
-- On standalone, a turn that claude.ai ends inside a thinking block without writing anything is reported as
-  `no_output` with `cutOff: true` and `problem: "turn_cut_off"`, even when earlier turns left
-  files behind (send a follow-up `design_iterate`). While the server still holds the turn's page it
-  stays `generating` and the page monitor makes the call.
-- On standalone, when a turn ends with `ready_for_verification`, the held page stays open up to 5 minutes
-  (`CLAUDE_DESIGN_VERIFY_GRACE_MS`) so the background check can report back. If the page shows
-  "The background check didn't finish", `design_check` clicks `Re-run check` for a turn that
-  produced files (at most twice per project) and returns `generating` with `verificationRerun: true`.
-  Transient RPC timeouts inside the monitor no longer close a page mid-generation.
+- Poll with `design_check({projectId})` (CLI: `check <projectId>`). Artifacts use the
+  API status mapping in [Backends](#backends), never auto-approve or auto-resume.
+  Legacy standalone may answer question forms, resume interruptions (up to three
+  attempts, then `resume_exhausted`), or rerun failed verification checks (up to twice).
 
 ## Asynchronous workflow
 
@@ -387,18 +414,22 @@ node src/server.mjs preview <projectId>
 
 `design_system_sync({ dir, model?, effort?, timeoutMs? })` (CLI: `sync <dir> [--timeout-ms ms]`)
 reads a materialized package with **package.json + styles.css**, snapshots its regular files,
-attaches a zip to a background Cowork session, and publishes a Design System artifact.
+attaches a zip to a background Cowork/chat session, and publishes a Design System artifact.
 It does not modify the package directory or write a pin automatically.
 
 - Lookup/create title: a description ending in `design system` becomes `<prefix> Design System`
   (preserving the prefix's case); otherwise the title is `<package.name> Design System`.
-- Target resolution: a UUID `artifactId` in `.design-sync/config.json` wins if present in
+- Target resolution: a UUID in `.design-sync/config.json` (`artifactId` for main,
+  `artifactIds.sub` for sub) wins if present in
   `design_system_list`; otherwise use an exact title match. Multiple title matches refuse
   without opening an operation page; no match creates a new Design System artifact.
   **Existing artifacts keep their current list title**, including capitalization. A pinned
   `Frontend Design System` is never renamed to the package-derived `frontend Design System`.
-- Pin future runs by preserving `.design-sync/config.json` and adding the returned `artifactId`;
+- Pin future runs by preserving `.design-sync/config.json` and adding the returned id
+  to the account's pin field;
   keep any existing standalone `projectId`. Stale pins fall back to title lookup.
+- If the resolved target already passes verification, return `ok:true, skipped:true,
+  created:false` without opening an operation page or submitting a turn.
 - All dot-files/dot-directories, `node_modules/`, `ds-bundle/`, and symlinks are excluded.
   Package `manifest.json` becomes `project/docs/manifest.json`; `package.json` is not published.
   Both `readme.md` and `README.md` feed Claude's `project/README.md`.

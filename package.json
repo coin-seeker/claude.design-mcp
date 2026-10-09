@@ -1,6 +1,6 @@
 {
   "name": "claude.design-mcp",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "private": true,
   "type": "module",
   "description": "MCP that drives the real claude.ai/design web app (login, create, iterate, pull) through your logged-in Chrome over CDP + playwright-core.",

@@ -5,7 +5,9 @@ export async function findWorkspaceSessionId(scoped, chatId, deps = {}) {
   const request = deps.designApiRequest ?? designApiRequest;
   for (let offset = 0; offset < 200; offset += 50) {
     const path = `/api/organizations/${encodeURIComponent(scoped.org)}/chat_conversations_v2?limit=50&offset=${offset}&archived=false&consistency=strong`;
-    const items = await request(scoped, 'GET', path);
+    // The list answers `{ data: [...] }` (measured 2026-10-10).
+    const page = await request(scoped, 'GET', path);
+    const items = Array.isArray(page?.data) ? page.data : page;
     if (!Array.isArray(items)) throw new TypeError('Invalid chat conversations page');
     const chat = items.find((item) => item.uuid === chatId);
     if (chat) return typeof chat.workspace_session_id === 'string' ? chat.workspace_session_id : null;

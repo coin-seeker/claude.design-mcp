@@ -1,0 +1,62 @@
+import { designApiRequest } from './api.mjs';
+import { EMPTY_SIGNATURE } from './turn.mjs';
+
+export async function readChatMessages(scoped, chatId, overrides = {}) {
+  const request = overrides.designApiRequest ?? designApiRequest;
+  const path = `/api/organizations/${encodeURIComponent(scoped.org)}/chat_conversations/${encodeURIComponent(chatId)}?tree=True&rendering_mode=messages&render_all_tools=true`;
+  const response = await request(scoped, 'GET', path);
+  if (!Array.isArray(response?.chat_messages) || response.chat_messages.some((message) =>
+    !Number.isInteger(message?.index) || !['human', 'assistant'].includes(message.sender) || !Array.isArray(message.content))) {
+    throw new TypeError('Invalid chat conversation messages');
+  }
+  return response.chat_messages;
+}
+
+// Prep assistant/tool_use messages before the first human are not part of a design turn.
+export function chatConversation(messages) {
+  const ordered = [...messages].sort((a, b) => b.index - a.index);
+  const firstHuman = ordered.filter((message) => message.sender === 'human').at(-1);
+  return firstHuman ? ordered.filter((message) => message.index >= firstHuman.index) : [];
+}
+
+export function chatLastMessageRole(messages) {
+  const newest = chatConversation(messages)[0];
+  if (!newest) return null;
+  switch (newest.sender) {
+    case 'human': return 'user';
+    case 'assistant': return 'assistant';
+    default: throw new TypeError(`Unexpected chat sender: ${newest.sender}`);
+  }
+}
+
+export const chatPromptCount = (messages) => messages.filter((message) => message.sender === 'human').length;
+const TERMINAL_STOPS = new Set(['end_turn', 'stop_sequence', 'max_tokens', 'refusal']);
+
+export function chatIdle(messages) {
+  const ordered = chatConversation(messages);
+  const human = ordered.find((message) => message.sender === 'human');
+  if (!human) return true;
+  const assistant = ordered.find((message) => message.sender === 'assistant' && message.index > human.index);
+  return Boolean(assistant && TERMINAL_STOPS.has(assistant.stop_reason));
+}
+
+export function classifyChatTurn({ messages, signature, submitSignature, now = Date.now(), stallMs = Number(process.env.CLAUDE_DESIGN_STALL_MS || 600_000) }) {
+  const ordered = chatConversation(messages);
+  const base = { lastMessageRole: chatLastMessageRole(messages) };
+  const human = ordered.find((message) => message.sender === 'human');
+  if (!human) return { ...base, status: 'stalled' };
+  const assistant = ordered.find((message) => message.sender === 'assistant' && message.index > human.index);
+  switch (assistant?.stop_reason) {
+    case 'end_turn':
+    case 'stop_sequence': {
+      const changed = signature !== EMPTY_SIGNATURE && (submitSignature == null || signature !== submitSignature);
+      return { ...base, status: changed ? 'done' : 'no_output' };
+    }
+    case 'max_tokens':
+    case 'refusal': return { ...base, status: 'interrupted', problem: `result_${assistant.stop_reason}` };
+    default: {
+      const stalled = now - Date.parse(ordered[0].updated_at) > stallMs;
+      return { ...base, status: stalled ? 'stalled' : 'generating' };
+    }
+  }
+}

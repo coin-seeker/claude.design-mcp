@@ -3,14 +3,20 @@ import { holdOperationPage } from '../operation-pages.mjs';
 import { ccrRequest } from './api.mjs';
 import { readAllEvents, isRealPrompt, EMPTY_SIGNATURE } from './turn.mjs';
 import { artifactsCheck } from './check.mjs';
+import { readChatMessages, chatPromptCount } from './chat-turn.mjs';
 
-const WAIT_DEPS = { delay, now: Date.now, ccrRequest, readAllEvents, artifactsCheck, holdOperationPage };
+const WAIT_DEPS = { delay, now: Date.now, ccrRequest, readAllEvents, readChatMessages, artifactsCheck, holdOperationPage };
 
 // Fourth argument is the shared DI/options seam, preserving T6's positional public contract.
 export async function confirmSubmitted(scoped, sessionId, promptCountBefore, overrides = {}) {
   const deps = { ...WAIT_DEPS, ...overrides };
   const deadline = deps.now() + (overrides.timeoutMs ?? 30_000);
   do {
+    if (sessionId?.surface === 'chat') {
+      if (chatPromptCount(await deps.readChatMessages(scoped, sessionId.chatId, deps)) > promptCountBefore) return;
+      await deps.delay(1_000);
+      continue;
+    }
     const [session, events] = await Promise.all([
       deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(sessionId)}`),
       deps.readAllEvents(scoped, sessionId, deps),

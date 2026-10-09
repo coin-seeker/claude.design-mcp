@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { currentAccount } from '../accounts.mjs';
 import { ensureSession } from '../session.mjs';
 import { withOperationPage, withRpcPage } from '../operation-pages.mjs';
 import { resolveOptionalModel, resolveEffort } from '../model.mjs';
@@ -22,7 +23,7 @@ const SYNC_DEPS = {
 
 export async function artifactsSystemSync(args = {}, overrides = {}) {
   const deps = { ...SYNC_DEPS, ...overrides };
-  let result = { ok: false, dir: args.dir ?? null, backend: 'artifacts', systemName: null, artifactId: null,
+  let result = { ok: false, dir: args.dir ?? null, backend: 'artifacts', account: currentAccount(), skipped: false, systemName: null, artifactId: null,
     projectId: null, sessionId: null, url: null, created: false, verified: { files: 0, mismatched: [] } };
   let archive;
   // This public boundary converts every sync failure into the result contract, including cleanup.
@@ -47,6 +48,33 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
     const title = target ? target.name : pkg.title;
     result = { ...result, systemName: title, created: !target,
       artifactId: target?.id ?? null, projectId: target?.id ?? null };
+    const verifyPublished = async (scoped, projectId) => {
+      const manifest = await deps.getManifest(scoped, projectId, deps);
+      const files = deps.projectFiles(manifest.files).map(({ rel, ...file }) => file);
+      const readJson = async (filePath) => {
+        const bytes = await deps.fetchFileBytes(frameFileUrl(projectId, manifest.ver, filePath, manifest.assetToken), deps.fetchImpl);
+        try { return JSON.parse(bytes.toString('utf8')); }
+        catch (error) {
+          if (error instanceof SyntaxError) return null;
+          throw error;
+        }
+      };
+      let index;
+      const verified = await deps.verifySync(files, pkg, title, async () => {
+        index = await readJson('project/design-system.json');
+        return index?.title;
+      }, () => readJson('project/tokens.json'));
+      if (index && (Object.hasOwn(index, 'editing') || Object.hasOwn(index, 'source'))
+        && !verified.mismatched.includes('project/design-system.json')) verified.mismatched.push('project/design-system.json');
+      return { manifest, verified };
+    };
+    if (target) {
+      const { verified } = await deps.withRpcPage(session, (page) => verifyPublished({ ...session, page }, target.id));
+      if (!verified.mismatched.length) {
+        deps.updateEntry(target.id, { name: title });
+        return { ...result, ok: true, skipped: true, created: false, verified, url: artifactUrl(target.id) };
+      }
+    }
     archive = await deps.zipPackage(pkg);
     result = await deps.withOperationPage(session, async (page) => {
       const scoped = { ...session, page };
@@ -74,23 +102,7 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
           ...(typeof settled.costUsd === 'number' ? { costUsd: (result.costUsd ?? 0) + settled.costUsd } : {}) };
         if (settled.status !== 'done') return { ...result, error: `Design System sync did not finish: ${settled.status}` };
         progress('Verifying published design-system files');
-        const manifest = await deps.getManifest(scoped, projectId, deps);
-        const files = deps.projectFiles(manifest.files).map(({ rel, ...file }) => file);
-        const readJson = async (filePath) => {
-          const bytes = await deps.fetchFileBytes(frameFileUrl(projectId, manifest.ver, filePath, manifest.assetToken), deps.fetchImpl);
-          try { return JSON.parse(bytes.toString('utf8')); }
-          catch (error) {
-            if (error instanceof SyntaxError) return null;
-            throw error;
-          }
-        };
-        let index;
-        const verified = await deps.verifySync(files, pkg, title, async () => {
-          index = await readJson('project/design-system.json');
-          return index?.title;
-        }, () => readJson('project/tokens.json'));
-        if (index && (Object.hasOwn(index, 'editing') || Object.hasOwn(index, 'source'))
-          && !verified.mismatched.includes('project/design-system.json')) verified.mismatched.push('project/design-system.json');
+        const { manifest, verified } = await verifyPublished(scoped, projectId);
         result = { ...result, verified };
         if (!verified.mismatched.length) return { ...result, ok: true };
         baseline = deps.artifactSignature(manifest.files);

@@ -1,3 +1,5 @@
+import { resolveAccount } from './accounts.mjs';
+
 const GENERATE_FLAGS = {
   '--no-wait': { key: 'wait', value: false },
   '--model': { key: 'model' },
@@ -14,6 +16,7 @@ const CREATE_FLAGS = {
 
 const SYNC_FLAGS = {
   '--timeout-ms': { key: 'timeoutMs' },
+  '--account': { key: 'account' },
 };
 
 const LIST_FLAGS = { '--details': { key: 'details', value: true }, '--limit': { key: 'limit' } };
@@ -49,7 +52,9 @@ export function parseGenerateFlags(args) {
 }
 
 export function parseSyncFlags(args) {
-  return parseFlags(args, SYNC_FLAGS);
+  const parsed = parseFlags(args, SYNC_FLAGS);
+  if (parsed.flags.account !== undefined) resolveAccount(parsed.flags.account);
+  return parsed;
 }
 
 export function parseListFlags(args) {

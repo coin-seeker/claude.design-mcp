@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expandHome } from '../helpers.mjs';
+import { currentAccount } from '../accounts.mjs';
 
 const zip = promisify(execFile);
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -51,7 +52,8 @@ export async function readPackage(directory) {
     const configPath = path.join(configDir, 'config.json');
     if ((await lstat(configDir)).isDirectory() && (await lstat(configPath)).isFile()) {
       const config = JSON.parse(await readFile(configPath, 'utf8'));
-      if (record(config) && typeof config.artifactId === 'string' && uuid.test(config.artifactId)) artifactId = config.artifactId;
+      const pin = record(config) ? (currentAccount() === 'main' ? config.artifactId : config.artifactIds?.sub) : null;
+      if (typeof pin === 'string' && uuid.test(pin)) artifactId = pin;
     }
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;

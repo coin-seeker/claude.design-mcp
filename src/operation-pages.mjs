@@ -1,7 +1,7 @@
 import { closePage, logEvent, pageIdentity } from './log.mjs';
 import { createBackgroundDesignPage } from './session.mjs';
+import { homeUrl } from './backend.mjs';
 
-const DESIGN_URL = 'https://claude.ai/design';
 const OPERATION_PAGE_LEASE_MS = 45 * 60_000;
 const heldOperationPages = new WeakMap();
 const heldProjectPages = new Map();
@@ -127,7 +127,7 @@ export async function withRpcPage(session, fn, deps = { createPage: createBackgr
 export async function withOperationPage(session, fn) {
   const context = session.browser.contexts()[0] || (await session.browser.newContext());
   const page = await context.newPage();
-  await page.goto(DESIGN_URL, { waitUntil: 'domcontentloaded' });
+  await page.goto(homeUrl(), { waitUntil: 'domcontentloaded' });
   let closeReason = 'operation-complete';
   try {
     return await fn(page);

@@ -3,6 +3,8 @@ import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSyn
 import path from 'node:path';
 
 import { expandHome, sanitizeRelPath } from './helpers.mjs';
+import { designBackend } from './backend.mjs';
+import { text, flag, firstText } from './history-values.mjs';
 
 export const HISTORY_SCHEMA_VERSION = 1;
 export const DEFAULT_HISTORY_DIR = '~/.local/share/opencode-dashboard/claude-design-history';
@@ -39,22 +41,6 @@ function warn(event, error) {
   process.stderr.write(`${JSON.stringify({ timestamp: new Date().toISOString(), event, error: String(error?.message || error) })}\n`);
 }
 
-function text(value) {
-  return typeof value === 'string' && value ? value : null;
-}
-
-function flag(value) {
-  return typeof value === 'boolean' ? value : null;
-}
-
-function firstText(...values) {
-  for (const value of values) {
-    const found = text(value);
-    if (found !== null) return found;
-  }
-  return null;
-}
-
 function errorText(error) {
   if (!error) return null;
   if (typeof error === 'string') return error;
@@ -83,6 +69,10 @@ export function splitCallerArgs(rawArguments) {
 function summarizeResult(result) {
   if (!isPlainObject(result)) return null;
   const summary = {};
+  const sessionId = firstText(result.sessionId, result.project?.sessionId);
+  if (sessionId !== null) summary.sessionId = sessionId;
+  const backend = text(result.backend);
+  if (backend !== null) summary.backend = backend;
   const projectId = firstText(result.projectId, result.project?.projectId);
   if (projectId !== null) summary.projectId = projectId;
   if (typeof result.reused === 'boolean') summary.reused = result.reused;
@@ -165,6 +155,8 @@ export function buildToolEvent({ tool, args, caller = null, result = null, error
     // Top level on purpose: the dashboard ingest reads `raw.revision`, so nesting it under
     // `result` would leave latest_revision/latest_complete_revision permanently NULL.
     revision: text(revision),
+    backend: text(result?.backend) ?? designBackend(),
+    sessionId: firstText(result?.sessionId, result?.project?.sessionId),
     result: summarizeResult(result),
   };
 }

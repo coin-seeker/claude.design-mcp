@@ -5,6 +5,7 @@ import { chromium as playwrightChromium } from 'playwright-core';
 
 import { expandHome } from './helpers.mjs';
 import { cookieOrgExpression, omelette } from './rpc.mjs';
+import { designBackend, homeUrl } from './backend.mjs';
 
 export { holdOperationPage, isHeldOperationPage, withOperationPage, withProjectOperationPage, withRpcPage, hasHeldProjectPage } from './operation-pages.mjs';
 
@@ -76,7 +77,7 @@ export async function launchChrome({ visible = false, fetchImpl = fetch, spawnIm
     `--remote-debugging-port=${port}`,
     '--disable-blink-features=AutomationControlled',
     ...(visible ? ['--new-window'] : hiddenArgs),
-    DESIGN_URL,
+    homeUrl(),
   ];
   let launchError = null;
   const child = spawnImpl(chromeBin(), args, { detached: true, stdio: 'ignore' });
@@ -97,10 +98,17 @@ function orgFromMe(me) {
   return me?.organizationUuid || me?.orgUuid || me?.organization?.uuid || null;
 }
 
-async function probePage(page) {
+export async function probePage(page) {
   let cookieOrg = null;
   try {
     cookieOrg = await page.evaluate(cookieOrgExpression());
+    if (designBackend() === 'artifacts') {
+      if (!cookieOrg) return { result: null, lastError: 'No organization cookie found' };
+      // Lazy import avoids session -> API -> session initialization cycles.
+      const { frameRequest } = await import('./artifacts/api.mjs');
+      await frameRequest({ page, org: cookieOrg }, 'GET', '/api/frame/types');
+      return { result: { org: cookieOrg, me: null }, lastError: null };
+    }
     const me = await omelette(page, 'GetMe', {}, cookieOrg);
     const text = String(me?.__text || '');
     const org = cookieOrg || orgFromMe(me);
@@ -130,7 +138,7 @@ export async function createBackgroundDesignPage(browser, { timeoutMs = 15_000 }
   const cdp = await browser.newBrowserCDPSession();
   let targetId;
   try {
-    ({ targetId } = await cdp.send('Target.createTarget', { url: DESIGN_URL, background: true }));
+    ({ targetId } = await cdp.send('Target.createTarget', { url: homeUrl(), background: true }));
   } finally {
     await cdp.detach();
   }

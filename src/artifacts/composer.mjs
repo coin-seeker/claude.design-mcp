@@ -146,7 +146,9 @@ export async function applyDesignSystemArtifacts(page, requested) {
       const current = await systemRows(page);
       return current.length ? current : null;
     }, 'Design system options unavailable');
-    const selected = requested === null ? null : matchDesignSystem(rows.map((row, index) => ({ name: row.name, index })), requested);
+    const match = requested === null ? null : matchDesignSystem(rows.map((row, index) => ({ name: row.name, index })), requested);
+    // Echo and verify the row's own name: a partial or differently-cased request is not what the trigger renders.
+    const selected = match && { index: match.index, name: rows[match.index].name };
     const wanted = (index) => index === selected?.index;
     // A plain click selects ONLY an unchecked row and unchecks a checked one, so one click can flip
     // other rows too. Re-read the menu after every click instead of trusting the first read.

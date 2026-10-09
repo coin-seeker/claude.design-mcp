@@ -23,10 +23,15 @@ export async function artifactsEdit(args = {}, overrides = {}) {
   const turn = await deps.artifactsIterate({ projectId: args.projectId, prompt, effort: 'low', wait: true, timeoutMs: 240_000 }, deps);
   const after = await deps.artifactsGet({ projectId: args.projectId, path: args.path }, deps);
   if (typeof after.text !== 'string') throw new Error('design_edit verification failed: file is no longer text');
-  const failures = edits.flatMap(({ oldString, newString }, index) => {
+  // Exact match with the locally applied edits is the strongest proof; otherwise (Claude re-serialised
+  // the file) each edit must move exactly one occurrence, counting an oldString nested in its newString.
+  const expected = edits.reduce((text, { oldString, newString }) => text.replace(oldString, () => newString), before.text);
+  const failures = after.text === expected ? [] : edits.flatMap(({ oldString, newString }, index) => {
     const oldCount = occurrences(after.text, oldString);
     const newCount = occurrences(after.text, newString);
-    return oldCount === 0 && newCount > 0 ? [] : [`edit ${index}: oldString count ${oldCount}, newString count ${newCount}`];
+    const wantOld = occurrences(before.text, oldString) - 1 + occurrences(newString, oldString);
+    const wantNew = occurrences(before.text, newString) + 1;
+    return oldCount === wantOld && newCount === wantNew ? [] : [`edit ${index}: oldString count ${oldCount} (want ${wantOld}), newString count ${newCount} (want ${wantNew})`];
   });
   if (failures.length) throw new Error(`design_edit verification failed: ${failures.join('; ')}`);
   return { projectId: args.projectId, path: args.path, sessionId: turn.sessionId, backend: 'artifacts', applied: edits.length, verified: true, version: after.version };

@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Migrating from standalone Claude Design (closes 2026-12-14)
 
-Version **0.9.2** uses claude.ai **Design artifacts**, backed by a Cowork session or
+Version **0.9.3** uses claude.ai **Design artifacts**, backed by a Cowork session or
 Chat conversation, rather than the retiring standalone `claude.ai/design` service.
 `projectId` is now the artifact UUID; old standalone ids are not interchangeable.
 Legacy standalone projects remain available as **local pulls**, not automatically
@@ -32,6 +32,9 @@ The migration progressed in these releases:
   to read the backing session; idle `review_ready` is a finished bucket alongside
   `completed` and `blocked`. Message-based checks remain the discovery-failure fallback.
 - **0.9.2:** artifacts-only tool metadata is concise; standalone metadata is unchanged.
+- **0.9.3:** the artifacts design-system picker re-reads the menu after every click, so a
+  system other than the preselected one (and `withoutDesignSystem`) is applied reliably.
+  A create that fails before sending also deletes its Cowork session, not just the artifact.
 
 ## Using it from OpenCode (claude-design skill)
 
@@ -335,7 +338,9 @@ frontmost tab. Generation still uses its composer page.
   and an unknown name errors with the list the composer offers. The chosen system replaces the
   org default rather than adding to it, and the result echoes the resolved name.
   Artifacts reselect the system on each requested turn, including iterate and name reuse;
-  the call errors if no picker is shown. The legacy standalone picker works only before
+  the call errors if no picker is shown. In the artifacts menu a click selects only that
+  system and a click on the checked one clears it (trigger: `No design system`); a failed
+  selection error lists every option with its checked state. The legacy standalone picker works only before
   a project has produced a design. `design_variants` grounds every variant in the same system.
 - **Grounding is mandatory on `design_create` and `design_variants`.** Each call must carry
   exactly one of a non-blank `designSystem` or `withoutDesignSystem: true` (the boolean `true`,

@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Backends
 
-Version **0.8.0** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
+Version **0.9.0** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
 artifact + Cowork session**. Set `CLAUDE_DESIGN_BACKEND=standalone` to use the unchanged
 `claude.ai/design` service, which remains selectable until it closes on **2026-12-14**.
 Tool names and input schemas are identical; the backend is selected on each call.
@@ -57,6 +57,39 @@ The local artifact/session index is
 `~/.cache/claude-design-mcp/artifacts-index.json`; override its directory with
 `CLAUDE_DESIGN_STATE_DIR`. It records names, sessions and submission baselines; writes
 are atomic with private directory/file permissions (`0700`/`0600`).
+
+## Accounts
+
+Every tool accepts optional `account: "main" | "sub"`. Main is the default; use sub
+only when the user explicitly asks. Sub requires the artifacts backend: standalone
+rejects it with `sub account requires the artifacts backend`.
+
+| Account | Chrome profile | CDP port | Overrides |
+|---|---|---|---|
+| `main` | `~/.cache/claude-design-mcp/chrome-profile` | `9377` | `CLAUDE_DESIGN_PROFILE`, `CLAUDE_DESIGN_CDP_PORT` |
+| `sub` | `~/.cache/claude-design-mcp/chrome-profile-sub` | `9378` | `CLAUDE_DESIGN_SUB_PROFILE`, `CLAUDE_DESIGN_SUB_CDP_PORT` |
+
+Calls run in isolated async account contexts and reuse a separate session cache per
+account. Resolution is explicit `account` > the `projectId` index entry's account >
+main. Old entries without an account belong to main. Thus `design_pull({projectId})`
+automatically follows a sub artifact created by this server. Name reuse is scoped to
+the selected account; **name-based pull/preview resolve to main unless account is
+given**. Use `design_login({account:"sub"})` to report the sub account's email and org.
+
+`design_create`, `design_iterate`, `design_preview`, `design_variants`, `design_pull`
+and `design_check` keep their existing result shapes. Account is recorded at the top
+level of history, after `sessionId`, and appears in login/status/sync results and each
+design/design-system list item.
+
+Sync a package to sub with `node src/server.mjs sync <dir> --account sub` or
+`design_system_sync({dir:"<dir>", account:"sub"})`. Main keeps the existing
+`.design-sync/config.json` `artifactId` pin; sub uses `artifactIds.sub`. With no valid
+pin, sync matches the title in that account or creates a new artifact. The server
+never writes this config or the package directory. An already verified target returns
+`ok:true, skipped:true, created:false` without opening an operation page or sending
+a Cowork turn. Verification checks verbatim file hashes, README presence, index title,
+list-shaped color tokens when required, and absence of index `editing`/`source` keys.
+CLI result lines include `account` and `skipped`.
 
 ## How it works
 
@@ -131,7 +164,7 @@ Every `tools/call` dispatch appends exactly one JSON line to
 override the folder with `CLAUDE_DESIGN_HISTORY_DIR`), so a prompt history survives across MCP restarts.
 A line carries `v`, `eventId`, `seq`, `ts`, `tool`, `durationMs`, `ok`, `error`, `projectId`, `projects`,
 `projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `withoutDesignSystem`,
-`withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, `backend`, `sessionId`, and a whitelisted `result` summary (counts, ids, file signature, and remote update time only — **never** file
+`withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, `backend`, `sessionId`, `account`, and a whitelisted `result` summary (counts, ids, file signature, and remote update time only — **never** file
 contents, base64, or environment values). Recording is best-effort observability: a failed write only warns
 on stderr and never turns a working tool call into an error. The CLI path is not recorded.
 

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expandHome, sanitizeRelPath } from './helpers.mjs';
 import { designBackend } from './backend.mjs';
 import { text, flag, firstText } from './history-values.mjs';
+import { currentAccount } from './accounts.mjs';
 
 export const HISTORY_SCHEMA_VERSION = 1;
 export const DEFAULT_HISTORY_DIR = '~/.local/share/opencode-dashboard/claude-design-history';
@@ -124,7 +125,7 @@ function attemptIdFor(tool, projectId) {
 }
 
 // One build per dispatched tools/call: it advances seq and mints the create/iterate attemptId.
-export function buildToolEvent({ tool, args, caller = null, result = null, error = null, durationMs = null, revision = null } = {}) {
+export function buildToolEvent({ tool, args, caller = null, result = null, error = null, durationMs = null, revision = null, account = currentAccount() } = {}) {
   const safeArgs = isPlainObject(args) ? args : {};
   const ok = !error;
   const projectId = firstText(safeArgs.projectId, result?.projectId, result?.project?.projectId);
@@ -159,6 +160,7 @@ export function buildToolEvent({ tool, args, caller = null, result = null, error
     // the project row, so a failed call on a legacy standalone id must not relabel it as artifacts.
     backend: ok ? (text(result?.backend) ?? designBackend()) : null,
     sessionId: ok ? firstText(result?.sessionId, result?.project?.sessionId) : null,
+    account,
     result: summarizeResult(result),
   };
 }

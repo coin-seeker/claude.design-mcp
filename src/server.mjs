@@ -3,6 +3,8 @@ import { parseCreateFlags, parseGenerateFlags, parseListFlags, parseSyncFlags } 
 import { recordToolCall, snapshotForToolCall, splitCallerArgs } from './history.mjs';
 import { runDesignSync } from './sync.mjs';
 import { IMPL, TOOLS } from './tools.mjs';
+import { resolveAccountFor } from './account-routing.mjs';
+import { resolveAccount, withAccount } from './accounts.mjs';
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
@@ -14,7 +16,7 @@ async function handle(message) {
     send({ jsonrpc: '2.0', id, result: {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'claude.design-mcp', version: '0.8.1' },
+      serverInfo: { name: 'claude.design-mcp', version: '0.9.0' },
     } });
     return;
   }
@@ -37,7 +39,9 @@ async function handle(message) {
     const { caller, rest } = splitCallerArgs(params?.arguments ?? {});
     const startedAt = Date.now();
     let outcome;
+    let account = null;
     try {
+      account = resolveAccountFor(params.name, rest);
       const result = await fn(rest);
       outcome = { result, text: JSON.stringify(result, null, 2) };
     } catch (error) {
@@ -47,7 +51,7 @@ async function handle(message) {
     // Post-processing only; a refused or failed snapshot just yields revision: null.
     const revision = snapshotForToolCall({ tool: params.name, args: rest, result: outcome.result, error: outcome.error });
     // Exactly one history line per dispatch, success or failure; recordToolCall never throws.
-    recordToolCall({ tool: params.name, args: rest, caller, result: outcome.result, error: outcome.error, durationMs, revision });
+    recordToolCall({ tool: params.name, args: rest, caller, result: outcome.result, error: outcome.error, durationMs, revision, account });
     if (outcome.error) send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `error: ${outcome.error.message}` }], isError: true } });
     else send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: outcome.text }] } });
     return;
@@ -142,18 +146,23 @@ async function runCli(argv) {
     else if (cmd === 'delete') console.log(JSON.stringify(await IMPL.design_delete({ projectId: rest[0], confirm: true }), null, 2)); // typing the delete subcommand is the confirmation
     else if (cmd === 'sync') {
       const { positional, flags } = parseSyncFlags(rest);
-      if (!positional[0]) throw new Error('usage: node src/server.mjs sync <dir> [--timeout-ms <ms>]');
+      if (!positional[0]) throw new Error('usage: node src/server.mjs sync <dir> [--account main|sub] [--timeout-ms <ms>]');
       const { designBackend } = await import('./backend.mjs');
       const artifacts = designBackend() === 'artifacts';
+      const account = resolveAccount(flags.account);
+      if (!artifacts && account === 'sub') throw new Error('sub account requires the artifacts backend');
       const sync = artifacts ? IMPL.design_system_sync : runDesignSync;
-      const synced = await sync({
+      const synced = await withAccount(account, () => sync({
         dir: positional[0],
+        account,
         timeoutMs: flags.timeoutMs,
         onProgress: (line) => send({ type: 'progress', stream: 'claude', text: line.slice(0, 2000) }),
-      });
+      }));
       send({
         type: 'result',
         ok: synced.ok,
+        account,
+        skipped: synced.skipped ?? false,
         systemName: synced.systemName ?? null,
         error: synced.error ?? null,
         verified: synced.verified ?? null,

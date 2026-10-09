@@ -155,8 +155,10 @@ export function buildToolEvent({ tool, args, caller = null, result = null, error
     // Top level on purpose: the dashboard ingest reads `raw.revision`, so nesting it under
     // `result` would leave latest_revision/latest_complete_revision permanently NULL.
     revision: text(revision),
-    backend: text(result?.backend) ?? designBackend(),
-    sessionId: firstText(result?.sessionId, result?.project?.sessionId),
+    // Only a successful call proves which backend owns the project: the dashboard copies these onto
+    // the project row, so a failed call on a legacy standalone id must not relabel it as artifacts.
+    backend: ok ? (text(result?.backend) ?? designBackend()) : null,
+    sessionId: ok ? firstText(result?.sessionId, result?.project?.sessionId) : null,
     result: summarizeResult(result),
   };
 }

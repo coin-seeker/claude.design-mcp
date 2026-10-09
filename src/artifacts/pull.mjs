@@ -36,9 +36,10 @@ export async function pullArtifact(scoped, design, outDir = DEFAULT_OUT, options
       errors.push({ path: rel, error: error instanceof Error ? error.message : String(error) });
     }
   }
-  const sessionId = design.sessionId ?? null;
-  const project = { projectId: design.projectId, name: design.name, type: 'PROJECT_TYPE_PROJECT', sessionId };
-  const common = { project, backend: 'artifacts', sessionId, ...(errors.length ? { errors } : {}) };
+  // Omit an unknown session rather than emitting null: consumers type sessionId as an optional string.
+  const session = design.sessionId ? { sessionId: design.sessionId } : {};
+  const project = { projectId: design.projectId, name: design.name, type: 'PROJECT_TYPE_PROJECT', ...session };
+  const common = { project, backend: 'artifacts', ...session, ...(errors.length ? { errors } : {}) };
   if (options.zip === true) {
     await (options.runZip || runZip)(baseDir, safeName);
     const zipPath = path.join(baseDir, `${safeName}.zip`);

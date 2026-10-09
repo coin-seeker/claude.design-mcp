@@ -28,8 +28,10 @@ export async function artifactsEdit(args = {}, overrides = {}) {
   const expected = edits.reduce((text, { oldString, newString }) => text.replace(oldString, () => newString), before.text);
   const failures = after.text === expected ? [] : edits.flatMap(({ oldString, newString }, index) => {
     const oldCount = occurrences(after.text, oldString);
-    const newCount = occurrences(after.text, newString);
     const wantOld = occurrences(before.text, oldString) - 1 + occurrences(newString, oldString);
+    // A deletion (empty newString) has no occurrence to count; only the oldString delta proves it.
+    if (!newString) return oldCount === wantOld ? [] : [`edit ${index}: oldString count ${oldCount} (want ${wantOld})`];
+    const newCount = occurrences(after.text, newString);
     const wantNew = occurrences(before.text, newString) + 1;
     return oldCount === wantOld && newCount === wantNew ? [] : [`edit ${index}: oldString count ${oldCount} (want ${wantOld}), newString count ${newCount} (want ${wantNew})`];
   });

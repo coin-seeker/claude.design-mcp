@@ -3,6 +3,7 @@ import { homeUrl } from '../backend.mjs';
 import { designSystemLabel, matchDesignSystem } from '../design-system.mjs';
 import { selectModelCandidate, matchEffortOption } from '../model.mjs';
 import { artifactUrl } from './listing.mjs';
+import { parseDesignLocation } from './surface.mjs';
 
 export const PICKER_MISSING = 'Design system picker is unavailable in this Cowork composer, so the design system cannot be (re)selected for this turn. Omit designSystem, or start a new artifact with design_create.';
 const MODEL = '[data-testid=model-selector-dropdown]';
@@ -70,8 +71,7 @@ export async function waitForInput(page) {
 export async function openNewDesign(page) {
   await page.goto(homeUrl(), { waitUntil: 'domcontentloaded' });
   await clickRequired(page, { selector: 'button[aria-label="Design, New"]' });
-  const match = await poll(() => /\/cowork\/(cse_[A-Za-z0-9]+)\?artifact=([0-9a-f-]{36})/i.exec(page.url()), 'New Design artifact URL unavailable');
-  return { sessionId: match[1], projectId: match[2] };
+  return poll(() => parseDesignLocation(page.url()), 'New Design artifact URL unavailable');
 }
 
 export async function openNewDesignSystem(page) {
@@ -83,18 +83,16 @@ export async function openNewDesignSystem(page) {
     button.click();
     return true;
   }), 'New Design System card unavailable');
-  const match = await poll(() => /\/cowork\/(cse_[A-Za-z0-9]+)\?artifact=([0-9a-f-]{36})/i.exec(page.url()), 'New Design System URL unavailable');
-  return { sessionId: match[1], projectId: match[2] };
+  return poll(() => parseDesignLocation(page.url()), 'New Design System URL unavailable');
 }
 
 export async function openDesignSystemChat(page, artifactId) {
   await page.goto(artifactUrl(artifactId), { waitUntil: 'domcontentloaded' });
   await clickRequired(page, { selector: 'button[aria-label^="Claude와 채팅"], button[aria-label^="Chat with Claude"]' });
-  const match = await poll(() => {
-    const url = new URL(page.url());
-    return url.searchParams.get('artifact') === artifactId && /^\/cowork\/(cse_[A-Za-z0-9]+)$/.exec(url.pathname);
+  return poll(() => {
+    const location = parseDesignLocation(page.url());
+    return location?.projectId === artifactId ? location : null;
   }, 'Design System chat URL unavailable');
-  return { sessionId: match[1], projectId: artifactId };
 }
 
 export async function attachFile(page, filePath, name) {
@@ -104,8 +102,10 @@ export async function attachFile(page, filePath, name) {
 }
 
 export async function openDesignSession(page, sessionId, projectId) {
-  await page.goto(artifactUrl(projectId, sessionId), { waitUntil: 'domcontentloaded' });
+  const location = typeof sessionId === 'object' && sessionId !== null ? sessionId : { sessionId, projectId };
+  await page.goto(artifactUrl(projectId ?? location.projectId, location.sessionId, location.chatId), { waitUntil: 'domcontentloaded' });
   await waitForInput(page);
+  return parseDesignLocation(page.url());
 }
 
 export function pickerState(page) {

@@ -6,7 +6,12 @@ import { artifactUrl } from './listing.mjs';
 
 export const PICKER_MISSING = 'Design system picker is unavailable: claude.ai only offers it on an empty Design artifact, so pass designSystem on design_create (a new artifact) rather than on one that already holds a design.';
 const MODEL = '[data-testid=model-selector-dropdown]';
-const RADIO = '[role=menuitemradio]';
+// Base UI keeps a closed popup mounted (data-closed) while its exit animation is pending, and a
+// background tab never finishes that animation, so only items of an open popup (data-open) count.
+const MODEL_RADIOS = '[role=menu][data-open]:not([data-nested]) [role=menuitemradio]';
+const MODEL_ITEMS = '[role=menu][data-open]:not([data-nested]) [role=menuitem]';
+const EFFORT_RADIOS = '[role=menu][data-open][data-nested] [role=menuitemradio]';
+const DS_OPTIONS = '[role=menuitemcheckbox]';
 const PICKER = { selector: 'button', text: 'Choose design system|Design system:' };
 
 async function poll(read, message, timeoutMs = 30_000) {
@@ -22,8 +27,9 @@ async function poll(read, message, timeoutMs = 30_000) {
 // Self-contained callbacks are serialized by Playwright. No locator actions depend on rAF.
 export function domClick(page, target) {
   return page.evaluate(({ selector, text, index = 0 }) => {
+    const inOpenPopup = (element) => { const menu = element.closest?.('[role=menu]'); return !menu || menu.hasAttribute('data-open'); };
     const matches = [...document.querySelectorAll(selector)].filter((element) =>
-      element.getClientRects().length && (!text || new RegExp(text, 'i').test(element.innerText)));
+      element.getClientRects().length && inOpenPopup(element) && (!text || new RegExp(text, 'i').test(element.innerText)));
     const element = matches[index];
     if (!element || element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
     element.click();
@@ -34,6 +40,28 @@ export function domClick(page, target) {
 async function clickRequired(page, target) {
   await poll(() => domClick(page, target), `Composer control unavailable: ${target.selector}`);
 }
+
+function triggerState(page, { selector, text }) {
+  return page.evaluate(({ selector, text }) => {
+    const trigger = [...document.querySelectorAll(selector)].find((element) =>
+      element.getClientRects().length && (!text || new RegExp(text, 'i').test(element.innerText)));
+    return trigger ? { expanded: trigger.getAttribute('aria-expanded') === 'true', label: trigger.getAttribute('aria-label') || trigger.innerText || '' } : null;
+  }, { selector, text });
+}
+
+// Escape does not close these popups in a background tab; toggling the trigger does (aria-expanded).
+async function setMenuOpen(page, trigger, open) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const state = await triggerState(page, trigger);
+    if (!state) throw new Error(`Composer control unavailable: ${trigger.selector}`);
+    if (state.expanded === open) return;
+    await domClick(page, trigger);
+    await delay(400);
+  }
+  if ((await triggerState(page, trigger))?.expanded !== open) throw new Error(`Composer menu did not ${open ? 'open' : 'close'}: ${trigger.selector}`);
+}
+
+const closeQuietly = (page, trigger) => setMenuOpen(page, trigger, false).catch(() => {});
 
 export async function waitForInput(page) {
   await poll(() => page.evaluate(() => !!document.querySelector('[data-testid=chat-input]')), 'Design composer input unavailable');
@@ -61,35 +89,34 @@ export function pickerState(page) {
 
 function menuOptions(page, selector) {
   return page.evaluate((query) => [...document.querySelectorAll(query)]
-    .filter((element) => element.getClientRects().length)
+    .filter((element) => { const menu = element.closest?.('[role=menu]'); return element.getClientRects().length && (!menu || menu.hasAttribute('data-open')); })
     .map((element) => ({ label: element.innerText, checked: element.getAttribute('aria-checked') === 'true' })), selector);
 }
 
 export async function applyDesignSystemArtifacts(page, requested) {
   if (!(await pickerState(page)).visible) throw new Error(PICKER_MISSING);
-  await clickRequired(page, PICKER);
   try {
-    const selector = '[role=menuitemcheckbox]';
+    await setMenuOpen(page, PICKER, true);
     const options = await poll(async () => {
-      const rows = await menuOptions(page, selector);
+      const rows = await menuOptions(page, DS_OPTIONS);
       return rows.length ? rows : null;
     }, 'Design system options unavailable');
     const selected = requested === null ? null : matchDesignSystem(options.map((row, index) => ({ name: designSystemLabel(row.label), index })), requested);
     for (let index = 0; index < options.length; index++) {
       const wanted = index === selected?.index;
       if (options[index].checked !== wanted) {
-        await clickRequired(page, { selector, index });
-        await poll(async () => (await menuOptions(page, selector))[index]?.checked === wanted, 'Design system selection was not applied');
+        await clickRequired(page, { selector: DS_OPTIONS, index });
+        await poll(async () => (await menuOptions(page, DS_OPTIONS))[index]?.checked === wanted, 'Design system selection was not applied');
       }
     }
-    await clickRequired(page, PICKER);
+    await setMenuOpen(page, PICKER, false);
     await poll(async () => {
       const state = await pickerState(page);
       return selected ? state.label.includes(selected.name) : /Choose design system/.test(state.label);
     }, 'Design system picker label verification failed');
     return { name: selected?.name ?? null };
   } catch (error) {
-    await page.keyboard.press('Escape').catch(() => {});
+    await closeQuietly(page, PICKER);
     throw error;
   }
 }
@@ -103,40 +130,44 @@ async function confirmSelection(page) {
   } while (Date.now() < deadline);
 }
 
+const MODEL_TRIGGER = { selector: MODEL };
+// The trigger label reads "<model> <effort>" (e.g. "모델: Opus 5.5 낮음"), so it verifies both selections.
+const triggerLabel = async (page) => (await triggerState(page, MODEL_TRIGGER))?.label || '';
+
 export async function applyModelArtifacts(page, request) {
-  await clickRequired(page, { selector: MODEL });
   try {
+    await setMenuOpen(page, MODEL_TRIGGER, true);
     const options = await poll(async () => {
-      const rows = await menuOptions(page, RADIO);
+      const rows = await menuOptions(page, MODEL_RADIOS);
       return rows.length ? rows : null;
     }, 'Model options unavailable');
     const selected = selectModelCandidate(options.map((row) => row.label), request);
-    await clickRequired(page, { selector: RADIO, index: selected.index });
-    await confirmSelection(page);
-    await clickRequired(page, { selector: MODEL });
-    await poll(async () => (await menuOptions(page, RADIO)).some((row) => row.checked && row.label.includes(selected.uiLabel)), 'Model selection verification failed');
-    await page.keyboard.press('Escape');
+    if (!options[selected.index].checked) {
+      await clickRequired(page, { selector: MODEL_RADIOS, index: selected.index });
+      await confirmSelection(page);
+    }
+    await setMenuOpen(page, MODEL_TRIGGER, false);
+    await poll(async () => (await triggerLabel(page)).includes(selected.uiLabel), 'Model selection verification failed', 10_000);
     return { uiLabel: selected.uiLabel, apiId: selected.apiId };
   } catch (error) {
-    await page.keyboard.press('Escape').catch(() => {});
+    await closeQuietly(page, MODEL_TRIGGER);
     throw error;
   }
 }
 
 async function openEffortMenu(page) {
-  await clickRequired(page, { selector: MODEL });
-  const target = { selector: '[role=menuitem]', text: '^(노력|Effort)' };
-  await clickRequired(page, target);
+  await setMenuOpen(page, MODEL_TRIGGER, true);
+  const item = { selector: MODEL_ITEMS, text: '^(노력|Effort)' };
+  await clickRequired(page, item);
   try {
-    await poll(() => page.evaluate(() => [...document.querySelectorAll('[role=menu]')].filter((element) => element.getClientRects().length).length > 1), 'Effort submenu unavailable', 2_000);
+    await poll(async () => (await menuOptions(page, EFFORT_RADIOS)).length > 0, 'Effort submenu unavailable', 2_000);
   } catch (error) {
     if (!(error instanceof Error) || error.message !== 'Effort submenu unavailable') throw error;
-    await page.evaluate(() => [...document.querySelectorAll('[role=menuitem]')].find((element) => /^(노력|Effort)/.test(element.innerText))?.focus());
+    await page.evaluate((query) => [...document.querySelectorAll(query)].find((element) => /^(노력|Effort)/.test(element.innerText))?.focus(), MODEL_ITEMS);
     await page.keyboard.press('ArrowRight');
   }
-  // Radix may portal the submenu rather than nesting it in the outer menu.
   return poll(async () => {
-    const rows = await menuOptions(page, RADIO);
+    const rows = await menuOptions(page, EFFORT_RADIOS);
     return rows.some((row) => matchEffortOption([row.label], 'low')) ? rows : null;
   }, 'Effort options unavailable');
 }
@@ -146,18 +177,18 @@ export async function applyEffortArtifacts(page, effort) {
     const rows = await openEffortMenu(page);
     const selected = matchEffortOption(rows.map((row) => row.label), effort);
     if (!selected) throw new Error(`Effort "${effort}" not available. Available efforts: ${rows.map((row) => row.label).join(', ')}`);
-    await clickRequired(page, { selector: RADIO, index: selected.index });
-    await confirmSelection(page);
-    await page.keyboard.press('Escape');
-    await page.keyboard.press('Escape');
-    await openEffortMenu(page);
-    await poll(async () => (await menuOptions(page, RADIO)).some((row) => row.checked && matchEffortOption([row.label], selected.effort)), 'Effort selection verification failed');
-    await page.keyboard.press('Escape');
-    await page.keyboard.press('Escape');
+    if (!rows[selected.index].checked) {
+      await clickRequired(page, { selector: EFFORT_RADIOS, index: selected.index });
+      await confirmSelection(page);
+    }
+    await setMenuOpen(page, MODEL_TRIGGER, false);
+    await poll(async () => {
+      const words = (await triggerLabel(page)).trim().split(/\s+/);
+      return matchEffortOption([words.at(-1) || ''], selected.effort);
+    }, 'Effort selection verification failed', 10_000);
     return selected.effort;
   } catch (error) {
-    await page.keyboard.press('Escape').catch(() => {});
-    await page.keyboard.press('Escape').catch(() => {});
+    await closeQuietly(page, MODEL_TRIGGER);
     throw error;
   }
 }

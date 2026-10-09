@@ -27,6 +27,12 @@ export function lastMessageRole(events) {
   }
 }
 
+const PICKUP_GRACE_MS = 30_000;
+
+function isHandshakeResult({ num_turns, total_cost_usd }) {
+  return num_turns === 0 && !total_cost_usd;
+}
+
 // This domain snapshot preserves the approved classifier's public input contract.
 export function classifyArtifactTurn({ session, events, signature, submitSignature, now = Date.now(), stallMs = Number(process.env.CLAUDE_DESIGN_STALL_MS || 600_000) }) {
   const ordered = newestFirst(events);
@@ -36,7 +42,16 @@ export function classifyArtifactTurn({ session, events, signature, submitSignatu
   }
 
   const prompt = ordered.find(isRealPrompt);
-  const result = prompt && ordered.find((event) => event.payload.type === 'result' && BigInt(event.sequence_num) > BigInt(prompt.sequence_num));
+  const idle = session.worker_status === 'idle' && session.status_bucket === 'completed';
+  // A running worker owns the turn: session init handshakes emit zero-turn `result` events right after
+  // the prompt (measured 2026-10-09), so results are only trusted once the worker is idle again.
+  if (!idle) {
+    const stalled = now - Date.parse(session.last_event_at) > stallMs;
+    return { ...base, status: stalled ? 'stalled' : 'generating' };
+  }
+  const result = prompt && ordered.find((event) => event.payload.type === 'result'
+    && BigInt(event.sequence_num) > BigInt(prompt.sequence_num)
+    && !isHandshakeResult(event.payload));
   if (result) {
     const { subtype, is_error, num_turns, total_cost_usd } = result.payload;
     const usage = {
@@ -47,12 +62,9 @@ export function classifyArtifactTurn({ session, events, signature, submitSignatu
     const changed = signature !== EMPTY_SIGNATURE && (submitSignature == null || signature !== submitSignature);
     return { ...base, ...usage, status: changed ? 'done' : 'no_output' };
   }
-
-  const idle = session.worker_status === 'idle' && session.status_bucket === 'completed';
-  if (!idle) {
-    const stalled = now - Date.parse(session.last_event_at) > stallMs;
-    return { ...base, status: stalled ? 'stalled' : 'generating' };
-  }
+  // The worker can still read idle for a moment after the prompt lands, before it picks the turn up.
+  const receivedAt = Number(prompt?.payload.server_received_wall_ms);
+  if (Number.isFinite(receivedAt) && now - receivedAt < PICKUP_GRACE_MS) return { ...base, status: 'generating' };
   if (prompt) return { ...base, status: 'interrupted', problem: 'idle_without_result' };
   return { ...base, status: 'stalled' };
 }

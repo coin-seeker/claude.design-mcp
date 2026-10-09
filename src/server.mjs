@@ -14,7 +14,7 @@ async function handle(message) {
     send({ jsonrpc: '2.0', id, result: {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'claude.design-mcp', version: '0.8.0' },
+      serverInfo: { name: 'claude.design-mcp', version: '0.8.1' },
     } });
     return;
   }

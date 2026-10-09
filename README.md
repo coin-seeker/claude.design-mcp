@@ -44,13 +44,13 @@ and keep their original references. Zip pulls archive the same layout. Default p
 Signatures hash sorted, prefix-stripped `path:sha256` pairs for `project/` files only.
 
 **`design_edit` consumes usage**: there is no artifacts file-write API. It runs an
-instructed Haiku/low Cowork turn (about $0.03 in live QA) in a background operation page, requires each old string to occur
+instructed Cowork turn (default Opus 5.5 / extra, like every generation) in a background operation page, requires each old string to occur
 exactly once, then re-reads the file to verify the literal edits. It is not a direct RPC edit.
 
 **`design_system_sync` is artifacts-native and consumes usage.** It attaches a package zip
 to a Design System Cowork session, creates or revises the artifact, then verifies the
 published files. It never uses the standalone service, Claude Code `/design-sync`, or a
-migration API. Defaults are `model: "sonnet"`, `effort: "medium"`, `timeoutMs: 900000`.
+migration API. Defaults are `model: "opus-5.5"`, `effort: "extra"`, `timeoutMs: 900000`.
 See [Design-system sync](#design-system-sync) for title preservation, pins and verification.
 
 The local artifact/session index is
@@ -217,13 +217,13 @@ frontmost tab. Generation still uses its composer page.
   the live menu options. For CLI `create` and `iterate`, pass the same value to `--model`.
 - `design_create` and `design_iterate` accept an optional `effort`: `low`, `medium`, `high`,
   `extra`, or `max`, matching the composer's Effort menu (`xhigh` is an alias of `extra`).
-  Without `effort` every generation uses `high`. If the composer cannot be set to the effort
+  Without `effort` every generation uses `extra`. If the composer cannot be set to the effort
   (explicit or default) the call fails before the prompt is sent, with the live options in the
   error. A page reload resets the composer to Medium, so the effort is re-applied right before
   every submit and also before the follow-up turns the server starts itself: the clarifying-question
    standalone form's Continue (skipped, leaving `awaiting_input`, if the effort cannot be set) and the
    standalone interruption Resume in `design_check`. Those use the project's last requested effort in this
-  server process, else `high`. CLI: `--effort <value>`.
+  server process, else `extra`. CLI: `--effort <value>`.
 - `design_create`, `design_iterate`, and `design_variants` accept a `designSystem`
   (CLI `--design-system`), the name of one of the account design systems reported by
   `design_system_list`. It is matched case-insensitively, an unambiguous partial name works,
@@ -352,7 +352,7 @@ It does not modify the package directory or write a pin automatically.
   `project/README.md`, checks the index title, rejects leftover migration keys, and requires a
   non-empty `color.tokens` array when source colors exist. One mismatch triggers **at most one**
   corrective turn in the same session. A non-`done` turn or persistent mismatch is `ok: false`.
-- Defaults: **Sonnet / medium / 900000 ms per turn**. Model and effort are explicitly applied
+- Defaults: **Opus 5.5 / extra / 900000 ms per turn**. Model and effort are explicitly applied
   before submission. This consumes account usage and can take minutes; a corrective turn also
   consumes usage. `costUsd`, when available, sums the sync turns' costs.
 - Results: `{ ok, dir, backend: "artifacts", systemName, artifactId, projectId: artifactId,

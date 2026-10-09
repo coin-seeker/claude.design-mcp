@@ -37,7 +37,7 @@ const EFFORT_ALIASES = new Map([
   ['maximum', 'max'],
   ['med', 'medium'],
 ]);
-export const DEFAULT_EFFORT = 'high';
+export const DEFAULT_EFFORT = 'extra';
 export const EFFORT_LABEL_ALIASES = new Map([
   ['낮음', 'low'], ['중간', 'medium'], ['높음', 'high'], ['엑스트라', 'extra'], ['최대', 'max'],
 ]);

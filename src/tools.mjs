@@ -38,9 +38,9 @@ const ARTIFACTS_DESCRIPTIONS = {
   design_list: 'List Claude Design artifacts from the logged-in account. Read-only API in an existing background claude.ai page; never opens, focuses, or navigates a visible tab. Optional limit restricts the listing; details:true adds manifest file stats, restricted to detailsFor when supplied.',
   design_iterate: 'Submit a follow-up prompt to an existing Claude Design (claude.ai Design artifact + Cowork session). designSystem (re)selects the composer design system for this turn; it errors only if claude.ai shows no picker.',
   design_check: 'Poll the completion state of a pending design generation. API-only (Cowork session + artifact manifest); never opens a page. Returns status: generating | awaiting_input | done | no_output | interrupted | stalled. Permission requests are reported, never auto-approved.',
-  design_edit: 'Applies literal edits by running an instructed Cowork turn on Haiku/low (consumes usage) and verifies the result by re-reading the file; opens a background operation page.',
+  design_edit: 'Applies literal edits by running an instructed Cowork turn (consumes usage) and verifies the result by re-reading the file; opens a background operation page.',
   design_variants: 'Submit multiple design variants of one prompt in parallel (max 3 concurrent), each as its own Design artifact; returns pending projectIds immediately (no preview) — poll each with design_check. designSystem grounds every variant. Grounding is mandatory: pass exactly one of designSystem or withoutDesignSystem: true.',
-  design_system_sync: 'Create or update a Design System artifact from a materialized package directory (package.json + styles.css) through a Cowork session; never uses standalone claude.ai/design. Consumes usage. Defaults: model sonnet, effort medium, timeoutMs 900000.',
+  design_system_sync: 'Create or update a Design System artifact from a materialized package directory (package.json + styles.css) through a Cowork session; never uses standalone claude.ai/design. Consumes usage. Defaults: model opus-5.5, effort extra, timeoutMs 900000.',
 };
 
 export function buildTools(backend) {

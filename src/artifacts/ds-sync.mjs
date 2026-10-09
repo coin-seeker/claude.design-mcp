@@ -31,8 +31,8 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
     progress('Reading design-system package');
     const pkg = await deps.readPackage(args.dir);
     result = { ...result, dir: pkg.dir, systemName: pkg.title };
-    const request = resolveOptionalModel(args.model ?? 'sonnet');
-    const effort = resolveEffort(request, args.effort ?? 'medium');
+    const request = resolveOptionalModel(args.model);
+    const effort = resolveEffort(request, args.effort);
     const timeoutMs = Number(args.timeoutMs ?? 900_000);
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError('timeoutMs must be positive');
     const session = await deps.ensureSession({ visible: false });

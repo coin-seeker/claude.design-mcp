@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Backends
 
-Version **0.7.0** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
+Version **0.8.0** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
 artifact + Cowork session**. Set `CLAUDE_DESIGN_BACKEND=standalone` to use the unchanged
 `claude.ai/design` service, which remains selectable until it closes on **2026-12-14**.
 Tool names and input schemas are identical; the backend is selected on each call.
@@ -47,10 +47,11 @@ Signatures hash sorted, prefix-stripped `path:sha256` pairs for `project/` files
 instructed Haiku/low Cowork turn (about $0.03 in live QA) in a background operation page, requires each old string to occur
 exactly once, then re-reads the file to verify the literal edits. It is not a direct RPC edit.
 
-`design_system_sync` still uploads through the **standalone** Claude Code `/design-sync`
-flow, then runs the migration to a Design System artifact. It therefore depends on the
-standalone service; results add `artifactId` and `migration` (with independent `ok`,
-outcome and error fields). A successful upload does not guarantee successful migration.
+**`design_system_sync` is artifacts-native and consumes usage.** It attaches a package zip
+to a Design System Cowork session, creates or revises the artifact, then verifies the
+published files. It never uses the standalone service, Claude Code `/design-sync`, or a
+migration API. Defaults are `model: "sonnet"`, `effort: "medium"`, `timeoutMs: 900000`.
+See [Design-system sync](#design-system-sync) for title preservation, pins and verification.
 
 The local artifact/session index is
 `~/.cache/claude-design-mcp/artifacts-index.json`; override its directory with
@@ -116,7 +117,7 @@ Re-review this verdict if any of these conditions occurs:
 | `design_check` | Poll an asynchronous generation — `projectId`; artifacts status mapping above, `checkPath: "artifacts"`; standalone may recover via `held`, `rpc`, or `ui` |
 | `design_edit` | Verified literal file edits via a usage-consuming Cowork turn (standalone: direct RPC) — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
-| `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
+| `design_system_sync` | Create or update a **Design System artifact** through a usage-consuming Cowork turn — `dir`, `model?`, `effort?`, `timeoutMs?` (standalone: Claude Code `/design-sync`) |
 | `design_system_list` | List Design System instances (name + id + optional publication/default fields); standalone follows the project list |
 
 Every tool also accepts an optional `caller` object — `{ directory, sessionID, agent, project? }` — that
@@ -318,12 +319,54 @@ node src/server.mjs preview <projectId>
 - `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~360s, iterate ~240s defaults)
 - `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `20000`)
 - `CLAUDE_DESIGN_PAGE_LEASE_MS` — independent hard cap for an async owner page if its completion monitor hangs (default `2700000`, 45 minutes)
-- `CLAUDE_DESIGN_CLAUDE_BIN` — Claude Code binary used by `design_system_sync` (default `claude`)
-- `CLAUDE_DESIGN_SYNC_TIMEOUT_MS` — hard cap for one `/design-sync` run (default `900000`, 15 minutes)
+- `CLAUDE_DESIGN_CLAUDE_BIN` — standalone-only Claude Code binary used by sync (default `claude`)
+- `CLAUDE_DESIGN_SYNC_TIMEOUT_MS` — standalone-only hard cap for one `/design-sync` run (default `900000`, 15 minutes); artifacts uses `timeoutMs`
 
 ## Design-system sync
 
-`design_system_sync` (CLI: `sync <dir>`) runs
+### Artifacts (default)
+
+`design_system_sync({ dir, model?, effort?, timeoutMs? })` (CLI: `sync <dir> [--timeout-ms ms]`)
+reads a materialized package with **package.json + styles.css**, snapshots its regular files,
+attaches a zip to a background Cowork session, and publishes a Design System artifact.
+It does not modify the package directory or write a pin automatically.
+
+- Lookup/create title: a description ending in `design system` becomes `<prefix> Design System`
+  (preserving the prefix's case); otherwise the title is `<package.name> Design System`.
+- Target resolution: a UUID `artifactId` in `.design-sync/config.json` wins if present in
+  `design_system_list`; otherwise use an exact title match. Multiple title matches refuse
+  without opening an operation page; no match creates a new Design System artifact.
+  **Existing artifacts keep their current list title**, including capitalization. A pinned
+  `Frontend Design System` is never renamed to the package-derived `frontend Design System`.
+- Pin future runs by preserving `.design-sync/config.json` and adding the returned `artifactId`;
+  keep any existing standalone `projectId`. Stale pins fall back to title lookup.
+- All dot-files/dot-directories, `node_modules/`, `ds-bundle/`, and symlinks are excluded.
+  Package `manifest.json` becomes `project/docs/manifest.json`; `package.json` is not published.
+  Both `readme.md` and `README.md` feed Claude's `project/README.md`.
+- Claude follows the type's SKILL.md, publishes listed files byte-for-byte using Artifact
+  `root`/`files` mapping, converts `tokens/tokens.json` to list-shaped `project/tokens.json`,
+  and writes `project/design-system.json` last with the kept title and
+  `lastChange.via: "opencode-dashboard sync"`. Migrated indexes finish migration by removing
+  `editing` and `source`. Other existing files are kept; page-generated files are not written.
+- Verification compares the published manifest SHA-256 for every verbatim target, requires
+  `project/README.md`, checks the index title, rejects leftover migration keys, and requires a
+  non-empty `color.tokens` array when source colors exist. One mismatch triggers **at most one**
+  corrective turn in the same session. A non-`done` turn or persistent mismatch is `ok: false`.
+- Defaults: **Sonnet / medium / 900000 ms per turn**. Model and effort are explicitly applied
+  before submission. This consumes account usage and can take minutes; a corrective turn also
+  consumes usage. `costUsd`, when available, sums the sync turns' costs.
+- Results: `{ ok, dir, backend: "artifacts", systemName, artifactId, projectId: artifactId,
+  sessionId, url, created, verified: { files, mismatched }, costUsd?, status?, error? }`.
+  `verified.files` counts verbatim files whose SHA matched; `mismatched` names failed paths.
+  Failures are returned rather than thrown. The temporary zip is always cleaned up.
+- CLI emits JSON progress lines `{ type: "progress", stream: "claude", text }` and one result
+  line including `ok`, `systemName`, `error`, `artifactId`, `sessionId`, `url`, `created`, and
+  `verified`. Exit status is **0 only for `ok: true`, otherwise 1**; dashboard runners require
+  both exit 0 and `ok: true`. No standalone upload or migration is involved.
+
+### Standalone (unchanged rollback)
+
+With `CLAUDE_DESIGN_BACKEND=standalone`, sync runs
 `claude -p "/design-sync <pre-approval>" --dangerously-skip-permissions --output-format stream-json --verbose`
 with the package folder as its working directory and reports what the sync uploaded. After a
 successful tokens-only sync, it uses the logged-in Chrome/CDP session to replace the uploaded

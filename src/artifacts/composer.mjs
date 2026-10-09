@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { homeUrl } from '../backend.mjs';
-import { designSystemLabel, matchDesignSystem } from '../design-system.mjs';
+import { matchDesignSystem } from '../design-system.mjs';
 import { selectModelCandidate, matchEffortOption } from '../model.mjs';
 import { artifactUrl } from './listing.mjs';
 import { parseDesignLocation } from './surface.mjs';
@@ -13,7 +13,10 @@ const MODEL_RADIOS = '[role=menu][data-open]:not([data-nested]) [role=menuitemra
 const MODEL_ITEMS = '[role=menu][data-open]:not([data-nested]) [role=menuitem]';
 const EFFORT_RADIOS = '[role=menu][data-open][data-nested] [role=menuitemradio]';
 const DS_OPTIONS = '[role=menuitemcheckbox]';
-const PICKER = { selector: 'button', text: 'Choose design system|Design system:' };
+// The trigger reads "Design system:\n<name>" with a selection and "No design system" without one
+// (measured 2026-10-10); "Choose design system" is the older empty label.
+const PICKER_TEXT = 'Choose design system|Design system:|No design system';
+const PICKER = { selector: 'button', text: PICKER_TEXT };
 
 async function poll(read, message, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
@@ -22,7 +25,7 @@ async function poll(read, message, timeoutMs = 30_000) {
     if (value) return value;
     await delay(500);
   } while (Date.now() < deadline);
-  throw new Error(message);
+  throw new Error(typeof message === 'function' ? message() : message);
 }
 
 // Self-contained callbacks are serialized by Playwright. No locator actions depend on rAF.
@@ -109,11 +112,11 @@ export async function openDesignSession(page, sessionId, projectId) {
 }
 
 export function pickerState(page) {
-  return page.evaluate(() => {
+  return page.evaluate((text) => {
     const button = [...document.querySelectorAll('button')].find((element) =>
-      element.getClientRects().length && /Choose design system|Design system:/.test(element.innerText));
+      element.getClientRects().length && new RegExp(text).test(element.innerText));
     return { visible: !!button, label: button?.innerText || '' };
-  });
+  }, PICKER_TEXT);
 }
 
 function menuOptions(page, selector) {
@@ -122,26 +125,46 @@ function menuOptions(page, selector) {
     .map((element) => ({ label: element.innerText, checked: element.getAttribute('aria-checked') === 'true' })), selector);
 }
 
+// A row reads "<check glyph>\n<name>\n, Enter selects only this one, …"; the name is its first real line.
+export function designSystemRowName(label) {
+  return String(label).replaceAll(/[\uE000-\uF8FF]/gu, '').split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+}
+
+async function systemRows(page) {
+  return (await menuOptions(page, DS_OPTIONS)).map((row) => ({ name: designSystemRowName(row.label), checked: row.checked }));
+}
+
+const checkedKey = (rows) => rows.map((row) => (row.checked ? '1' : '0')).join('');
+const selectionError = (wanted, rows) => new Error(`Design system selection was not applied: wanted ${wanted ?? 'no design system'}; options: ${
+  rows.map((row) => `${row.name}${row.checked ? ' [checked]' : ''}`).join(', ') || 'none'}`);
+
 export async function applyDesignSystemArtifacts(page, requested) {
   if (!(await pickerState(page)).visible) throw new Error(PICKER_MISSING);
   try {
     await setMenuOpen(page, PICKER, true);
-    const options = await poll(async () => {
-      const rows = await menuOptions(page, DS_OPTIONS);
-      return rows.length ? rows : null;
+    let rows = await poll(async () => {
+      const current = await systemRows(page);
+      return current.length ? current : null;
     }, 'Design system options unavailable');
-    const selected = requested === null ? null : matchDesignSystem(options.map((row, index) => ({ name: designSystemLabel(row.label), index })), requested);
-    for (let index = 0; index < options.length; index++) {
-      const wanted = index === selected?.index;
-      if (options[index].checked !== wanted) {
-        await clickRequired(page, { selector: DS_OPTIONS, index });
-        await poll(async () => (await menuOptions(page, DS_OPTIONS))[index]?.checked === wanted, 'Design system selection was not applied');
-      }
+    const selected = requested === null ? null : matchDesignSystem(rows.map((row, index) => ({ name: row.name, index })), requested);
+    const wanted = (index) => index === selected?.index;
+    // A plain click selects ONLY an unchecked row and unchecks a checked one, so one click can flip
+    // other rows too. Re-read the menu after every click instead of trusting the first read.
+    for (let step = 0; !rows.every((row, index) => row.checked === wanted(index)); step++) {
+      const index = selected && !rows[selected.index].checked ? selected.index : rows.findIndex((row, i) => row.checked && !wanted(i));
+      if (index < 0 || step > rows.length) throw selectionError(selected?.name, rows);
+      const before = checkedKey(rows);
+      let latest = rows;
+      await clickRequired(page, { selector: DS_OPTIONS, index });
+      rows = await poll(async () => {
+        latest = await systemRows(page);
+        return latest.length === rows.length && checkedKey(latest) !== before ? latest : null;
+      }, () => selectionError(selected?.name, latest).message);
     }
     await setMenuOpen(page, PICKER, false);
     await poll(async () => {
       const state = await pickerState(page);
-      return selected ? state.label.includes(selected.name) : /Choose design system/.test(state.label);
+      return selected ? state.label.includes(selected.name) : /No design system|Choose design system/.test(state.label);
     }, 'Design system picker label verification failed');
     return { name: selected?.name ?? null };
   } catch (error) {

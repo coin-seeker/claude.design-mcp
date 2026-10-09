@@ -5,19 +5,21 @@ import { assertDesignSystemChoice, designSystemChoiceEcho } from '../design-syst
 import { resolveOptionalModel, resolveEffort } from '../model.mjs';
 import { generateVariants } from '../variants.mjs';
 import { frameRequest, ccrRequest, ArtifactsHttpError } from './api.mjs';
-import { findByName, updateEntry, removeEntry } from './index-store.mjs';
+import { findByName, updateEntry, removeEntry, readIndex } from './index-store.mjs';
 import { resolveDesign, resolveSessionId, artifactUrl } from './listing.mjs';
 import { getManifest, artifactSignature } from './manifest.mjs';
 import { readAllEvents, isRealPrompt, EMPTY_SIGNATURE } from './turn.mjs';
 import * as composer from './composer.mjs';
 import { confirmSubmitted, holdUntilSettled, waitForArtifactTurn } from './generation-wait.mjs';
+import { artifactIdFromUrl } from './surface.mjs';
+import { readChatMessages, chatPromptCount, chatIdle } from './chat-turn.mjs';
 
 export { confirmSubmitted, holdUntilSettled } from './generation-wait.mjs';
 export { artifactsEdit } from './edit.mjs';
 
 const FLOW_DEPS = {
   ensureSession, withOperationPage, withRpcPage, frameRequest, ccrRequest,
-  findByName, updateEntry, removeEntry, resolveDesign, resolveSessionId, getManifest, artifactSignature,
+  findByName, updateEntry, removeEntry, readIndex, readChatMessages, resolveDesign, resolveSessionId, getManifest, artifactSignature,
   readAllEvents, ...composer, confirmSubmitted, holdUntilSettled, waitForArtifactTurn, now: Date.now,
   artifactsIterate,
 };
@@ -29,7 +31,7 @@ function requireString(value, name) {
 }
 
 async function finishTurn(page, scoped, turn, deps) {
-  const result = { projectId: turn.projectId, url: artifactUrl(turn.projectId, turn.sessionId), sessionId: turn.sessionId, backend: 'artifacts', model: turn.model, effort: turn.effort, ...turn.echo };
+  const result = { projectId: turn.projectId, url: artifactUrl(turn.projectId, turn.sessionId, turn.chatId), ...(turn.surface === 'chat' ? {} : { sessionId: turn.sessionId }), backend: 'artifacts', model: turn.model, effort: turn.effort, ...turn.echo };
   if (!turn.wait) {
     deps.holdUntilSettled(page, scoped, turn.projectId, deps);
     return { ...result, submitted: true, pending: true };
@@ -71,7 +73,7 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       created = await deps.openNewDesign(page);
       const { projectId, sessionId } = created;
       await deps.frameRequest(scoped, 'POST', `/api/frame/retitle/${encodeURIComponent(projectId)}`, { title: name });
-      deps.updateEntry(projectId, { name, sessionId });
+      deps.updateEntry(projectId, { name, sessionId, ...(created.surface ? { surface: created.surface, chatId: created.chatId } : {}) });
       await deps.waitForInput(page);
       const model = await deps.applyModelArtifacts(page, request);
       const selectedEffort = await deps.applyEffortArtifacts(page, effort);
@@ -85,15 +87,16 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       }
       await deps.sendPrompt(page, prompt);
       sent = true;
-      await deps.confirmSubmitted(scoped, sessionId, 0, deps);
+      await deps.confirmSubmitted(scoped, created.surface === 'chat' ? created : sessionId, 0, deps);
       deps.updateEntry(projectId, { lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: 1 });
       const echo = system.name ? { designSystem: system.name } : designSystemChoiceEcho(choice);
       const result = await finishTurn(page, scoped, { ...created, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 360_000) }, deps);
       return { ...result, name };
     } catch (error) {
-      if (created && !sent) {
-        await deps.frameRequest(scoped, 'DELETE', `/api/frame/${encodeURIComponent(created.projectId)}`).catch(() => {});
-        try { deps.removeEntry(created.projectId); } catch { /* Preserve the original failure on cleanup errors. */ }
+      const projectId = created?.projectId ?? artifactIdFromUrl(page.url?.());
+      if (projectId && !sent) {
+        await deps.frameRequest(scoped, 'DELETE', `/api/frame/${encodeURIComponent(projectId)}`).catch(() => {});
+        try { deps.removeEntry(projectId); } catch { /* Preserve the original failure on cleanup errors. */ }
       }
       throw error;
     }
@@ -107,8 +110,14 @@ export async function artifactsIterate(args = {}, overrides = {}) {
   const request = resolveOptionalModel(args.model);
   const effort = resolveEffort(request, args.effort);
   const session = await deps.ensureSession({ visible: false });
+  const entry = deps.readIndex().byArtifact[projectId];
+  const chat = entry?.surface === 'chat' && entry.chatId ? { surface: 'chat', chatId: entry.chatId, sessionId: null, projectId } : null;
   const sessionId = await deps.withRpcPage(session, async (page) => {
     const scoped = { ...session, page };
+    if (chat) {
+      if (!chatIdle(await deps.readChatMessages(scoped, chat.chatId, deps))) throw new Error(`a turn is still running on ${projectId}; poll design_check first`);
+      return null;
+    }
     const id = await deps.resolveSessionId(scoped, projectId, deps);
     if (!id) throw new Error(`no Cowork session found for artifact ${projectId}`);
     const state = await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(id)}`);
@@ -117,7 +126,7 @@ export async function artifactsIterate(args = {}, overrides = {}) {
   });
   return deps.withOperationPage(session, async (page) => {
     const scoped = { ...session, page };
-    await deps.openDesignSession(page, sessionId, projectId);
+    await deps.openDesignSession(page, chat ?? sessionId, projectId);
     const model = await deps.applyModelArtifacts(page, request);
     const selectedEffort = await deps.applyEffortArtifacts(page, effort);
     let echo = {};
@@ -126,11 +135,12 @@ export async function artifactsIterate(args = {}, overrides = {}) {
       echo = { designSystem: (await deps.applyDesignSystemArtifacts(page, args.designSystem)).name };
     }
     const baseline = deps.artifactSignature((await deps.getManifest(scoped, projectId, deps)).files);
-    const before = (await deps.readAllEvents(scoped, sessionId, deps)).filter(isRealPrompt).length;
+    const before = chat ? chatPromptCount(await deps.readChatMessages(scoped, chat.chatId, deps))
+      : (await deps.readAllEvents(scoped, sessionId, deps)).filter(isRealPrompt).length;
     await deps.sendPrompt(page, prompt);
-    await deps.confirmSubmitted(scoped, sessionId, before, deps);
-    deps.updateEntry(projectId, { sessionId, lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: before + 1 });
-    return finishTurn(page, scoped, { projectId, sessionId, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 240_000) }, deps);
+    await deps.confirmSubmitted(scoped, chat ?? sessionId, before, deps);
+    deps.updateEntry(projectId, { sessionId, ...(chat ? { surface: chat.surface, chatId: chat.chatId } : {}), lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: before + 1 });
+    return finishTurn(page, scoped, { projectId, sessionId, ...chat, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 240_000) }, deps);
   });
 }
 

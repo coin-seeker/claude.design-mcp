@@ -36,5 +36,5 @@ export async function artifactsEdit(args = {}, overrides = {}) {
     return oldCount === wantOld && newCount === wantNew ? [] : [`edit ${index}: oldString count ${oldCount} (want ${wantOld}), newString count ${newCount} (want ${wantNew})`];
   });
   if (failures.length) throw new Error(`design_edit verification failed: ${failures.join('; ')}`);
-  return { projectId: args.projectId, path: args.path, sessionId: turn.sessionId, backend: 'artifacts', applied: edits.length, verified: true, version: after.version };
+  return { projectId: args.projectId, path: args.path, ...(turn.sessionId === undefined ? {} : { sessionId: turn.sessionId }), backend: 'artifacts', applied: edits.length, verified: true, version: after.version };
 }

@@ -1,31 +1,84 @@
 # claude.design-mcp
 
-An MCP that drives the **real** [Claude Design](https://claude.ai/design) web app from your
+An MCP that drives the **real** [Claude Design](https://claude.ai/artifacts/design) web app from your
 editor/agent — log in once, then **create**, **iterate on**, and **pull** designs that
-claude.ai/design generates **on your own account** (not a local imitation).
+Claude Design generates **on your own account** (not a local imitation).
+
+## Backends
+
+Version **0.7.0** defaults to `CLAUDE_DESIGN_BACKEND=artifacts`: a claude.ai **Design
+artifact + Cowork session**. Set `CLAUDE_DESIGN_BACKEND=standalone` to use the unchanged
+`claude.ai/design` service, which remains selectable until it closes on **2026-12-14**.
+Tool names and input schemas are identical; the backend is selected on each call.
+An invalid backend value rejects calls, but does not prevent initialization or tool listing.
+
+For artifacts, `projectId` is the artifact UUID, `sessionId` is the Cowork `cse_…` id,
+and results identify `backend: "artifacts"`. Listing and generation URLs use
+`https://claude.ai/cowork/<sessionId>?artifact=<projectId>`; an artifact without a known
+session links to `https://claude.ai/code/artifact/<projectId>`. Standalone project URLs
+remain `https://claude.ai/design/p/<projectId>`; ids from one backend are not interchangeable.
+
+`design_check` reads the Cowork session, events and artifact manifest through APIs,
+without navigating the project page or automatically approving permission requests:
+
+| Status | Artifacts meaning |
+|---|---|
+| `awaiting_input` | Session requires action; returns `requiresAction` types for the user |
+| `done` | Successful result after the latest real prompt, with non-empty output changed from the submission baseline (or no known baseline) |
+| `no_output` | Successful result, but empty output or the same signature as the baseline |
+| `interrupted` | Error/non-success result, or an idle completed worker with a prompt but no result |
+| `generating` | Worker is active and its latest event is within the stall threshold |
+| `stalled` | No real prompt, or active worker whose last event exceeds the stall threshold |
+
+Artifacts checks return `checkPath: "artifacts"`, `answeredQuestions: false`, and never
+auto-resume; `resume_exhausted` belongs only to the standalone backend. Tool-result user
+events are not real prompts. `CLAUDE_DESIGN_STALL_MS` defaults to `600000` (10 minutes).
+
+Artifacts pulls strip the manifest's `project/` prefix, write the Design runtime as
+`support.js` next to each `*.dc.html`, download referenced assets into `_blob/`, and rewrite
+successful blob references to relative paths. Failed downloads are reported in `errors`
+and keep their original references. Zip pulls archive the same layout. Default pulls
+(no explicit `dir` or `zip`) still create revision snapshots, including runtime and blobs.
+Signatures hash sorted, prefix-stripped `path:sha256` pairs for `project/` files only.
+
+**`design_edit` consumes usage**: there is no artifacts file-write API. It runs an
+instructed Cowork turn in a background operation page, requires each old string to occur
+exactly once, then re-reads the file to verify the literal edits. It is not a direct RPC edit.
+
+`design_system_sync` still uploads through the **standalone** Claude Code `/design-sync`
+flow, then runs the migration to a Design System artifact. It therefore depends on the
+standalone service; results add `artifactId` and `migration` (with independent `ok`,
+outcome and error fields). A successful upload does not guarantee successful migration.
+
+The local artifact/session index is
+`~/.cache/claude-design-mcp/artifacts-index.json`; override its directory with
+`CLAUDE_DESIGN_STATE_DIR`. It records names, sessions and submission baselines; writes
+are atomic with private directory/file permissions (`0700`/`0600`).
 
 ## How it works
 
 - It drives **your own logged-in Chrome** (a dedicated profile) over CDP with
   [`playwright-core`](https://www.npmjs.com/package/playwright-core), and talks to the real
-  `claude.ai/design` "Omelette" API as **you**, through your browser session.
+  frame and Cowork session APIs as **you**, through your browser session. The selectable
+  standalone backend uses the `claude.ai/design` "Omelette" API instead.
 - **Generation is triggered the way the website does it** — your prompt is typed into the
   design composer and submitted; the tool then waits for the turn to finish (the
-  `ReleaseTurn` network signal + file-tree stability) and reports the files Claude Design
+   Cowork session result + artifact signature; standalone uses `ReleaseTurn` and file-tree stability) and reports the files Claude Design
   wrote. Files are pulled back to local on request.
-- Project metadata, files, deletes, and direct file edits use the documented JSON RPCs
+- Artifacts metadata and deletes use frame APIs; downloads use manifest file URLs.
+  Standalone metadata, files, deletes, and direct file edits use the JSON RPCs
   (`CreateProject` / `ListFiles` / `GetFile` / `EditFile` / `DeleteProject`),
   run in-page so they share your session + Cloudflare clearance.
 - Focus-free reads use an existing claude.ai page without navigating or focusing it. If none
   exists, CDP creates one background target; subsequent reads reuse that target.
-- **Not a `claude -p` mimic.** Every design is produced by claude.ai/design itself.
+- **Not a `claude -p` mimic.** Every design is produced by claude.ai itself.
 
 ## Official Design MCP and protocol verdict (2026-08-12)
 
 This project is an independent CDP browser-automation MCP. It does not call the official
 `api.anthropic.com/v1/design/mcp` endpoint. As described in [How it works](#how-it-works), it
 uses `playwright-core` and CDP to drive a real Chrome session that is already logged into the
-actual `claude.ai/design` web app.
+actual claude.ai web app. The dated export example below describes the standalone backend.
 
 The claude.ai/design UI's **Create prompt for Claude Code** export message hands off a project
 URL in the form `https://claude.ai/design/p/<projectId>`. For this server, the matching flow is
@@ -49,8 +102,8 @@ Re-review this verdict if any of these conditions occurs:
 
 | Tool | Does |
 |------|------|
-| `design_login` | One-time: open Chrome to log into claude.ai/design (session persists) |
-| `design_list` | List your claude.ai/design projects; `details?: true` includes file count, remote update time and signature |
+| `design_login` | One-time: open Chrome to log into Claude Design (session persists) |
+| `design_list` | List your Design artifacts (standalone: projects); `details?: true` includes file count, remote update time and signature |
 | `design_create` | Create a project and generate a design from a prompt — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `name?`, `wait?`, `model?`, `fresh?` |
 | `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `count?`, `axis?`, `name?`, `preview?`, `model?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?`, `designSystem?` |
@@ -58,11 +111,11 @@ Re-review this verdict if any of these conditions occurs:
 | `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
-| `design_check` | Poll and recover an asynchronous generation — `projectId`; returns `generating`, `awaiting_input`, `done`, `no_output`, `interrupted`, `stalled`, or `resume_exhausted`, plus `checkPath` (`held`, `rpc`, `ui`) |
-| `design_edit` | Apply a direct file edit — `projectId`, `path`, `edits` |
+| `design_check` | Poll an asynchronous generation — `projectId`; artifacts status mapping above, `checkPath: "artifacts"`; standalone may recover via `held`, `rpc`, or `ui` |
+| `design_edit` | Verified literal file edits via a usage-consuming Cowork turn (standalone: direct RPC) — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 | `design_system_sync` | Upload a materialized design-system package folder to claude.ai as a **design system**, by running Claude Code `/design-sync` in it — `dir` |
-| `design_system_list` | List the design systems on your account (name + id), across every page of the project list |
+| `design_system_list` | List Design System instances (name + id + optional publication/default fields); standalone follows the project list |
 
 Every tool also accepts an optional `caller` object — `{ directory, sessionID, agent, project? }` — that
 the MCP client may inject to say who is calling. It is never a generation argument: the dispatcher strips
@@ -75,7 +128,7 @@ Every `tools/call` dispatch appends exactly one JSON line to
 override the folder with `CLAUDE_DESIGN_HISTORY_DIR`), so a prompt history survives across MCP restarts.
 A line carries `v`, `eventId`, `seq`, `ts`, `tool`, `durationMs`, `ok`, `error`, `projectId`, `projects`,
 `projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `withoutDesignSystem`,
-`withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, and a whitelisted `result` summary (counts, ids, file signature, and remote update time only — **never** file
+`withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, `backend`, `sessionId`, and a whitelisted `result` summary (counts, ids, file signature, and remote update time only — **never** file
 contents, base64, or environment values). Recording is best-effort observability: a failed write only warns
 on stderr and never turns a working tool call into an error. The CLI path is not recorded.
 
@@ -97,24 +150,24 @@ failures are non-fatal in the same way: `revision: null` plus an stderr warning,
 
 `design_list`, `design_pull`, `design_get`, `design_status`, `design_preview`, and
 `design_system_list` run RPCs without opening, focusing, or navigating a visible tab.
-`design_edit` and `design_delete` also use focus-free RPC but **change remote data**.
-`design_preview` renders with a separate headless browser by default. `design_check`
-first checks through RPC; held generation pages and UI-only questions/interruptions
-continue through the project page. Generation (`design_create`, `design_iterate`) still
-uses its composer operation page.
+`design_delete` uses the same background API path but **changes remote data**.
+`design_edit` opens an operation page for a Cowork turn (standalone: focus-free RPC).
+`design_preview` renders with a separate headless browser by default. Artifacts
+`design_check` is API-only; standalone checks may use held pages or UI fallback.
+Generation (`design_create`, `design_iterate`) uses its composer operation page.
 
 ### `design_list` details
 
 Pass `{ "details": true }` (CLI: `list --details`) to receive `fileCount`,
 `remoteUpdatedAt`, and `signature` for each ordinary project. Design systems do not
-have these file stats. The signature is SHA-256 over sorted `path:version` pairs for
-all files; it matches the signature on a non-zip `design_pull` result.
+have these file stats. Artifacts signatures use sorted `path:sha256` pairs for project
+files; standalone uses `path:version` pairs. Both match non-zip `design_pull` results.
 
 `{ "limit": 20 }` (CLI: `list --limit 20`) reads only the first N projects —
-`ListProjects` returns favourites first, then the most recently viewed — so a limit of
+standalone `ListProjects` returns favourites first, then the most recently viewed — so a limit of
 20 costs one RPC. A limited read never replaces the cached full listing that
 `design_pull` uses. With `details: true`, `{ "detailsFor": ["<projectId>", ...] }`
-restricts the per-project `ListFiles` calls to those ids; other items come back
+restricts the per-artifact manifests (standalone: `ListFiles`) to those ids; other items come back
 without file stats.
 
 ```bash
@@ -165,8 +218,8 @@ frontmost tab. Generation still uses its composer page.
   (explicit or default) the call fails before the prompt is sent, with the live options in the
   error. A page reload resets the composer to Medium, so the effort is re-applied right before
   every submit and also before the follow-up turns the server starts itself: the clarifying-question
-  form's Continue (skipped, leaving `awaiting_input`, if the effort cannot be set) and the
-  interruption Resume in `design_check`. Those use the project's last requested effort in this
+   standalone form's Continue (skipped, leaving `awaiting_input`, if the effort cannot be set) and the
+   standalone interruption Resume in `design_check`. Those use the project's last requested effort in this
   server process, else `high`. CLI: `--effort <value>`.
 - `design_create`, `design_iterate`, and `design_variants` accept a `designSystem`
   (CLI `--design-system`), the name of one of the account design systems reported by
@@ -193,9 +246,9 @@ frontmost tab. Generation still uses its composer page.
   `<base>-v<N>`, and without `fresh` a rerun would reuse the same-named project from an earlier
   fan-out — a project that already holds a design, where the design system can no longer attach.
 - `design_create` and `design_iterate` accept `wait` (default `true`). Set `wait: false`
-  to return after a verified `Chat` POST and the bounded question-form watch with
+   to return after a confirmed Cowork submission (standalone: verified `Chat` POST and bounded question-form watch) with
   `{ submitted: true, pending: true }`; the CLI equivalent is `--no-wait`. A click or
-  Enter press that does not produce a `Chat` request fails instead of reporting success.
+   Enter press that does not confirm submission fails instead of reporting success.
 - `design_create` with an explicit `name` is **find-or-create**: an existing project with
   that exact name is reused (newest wins on collisions) and the result carries
   `reused: true`, so repeated calls iterate one project instead of piling up duplicates.
@@ -204,18 +257,18 @@ frontmost tab. Generation still uses its composer page.
 - Poll submitted work with `design_check({ projectId })`, or
   `node src/server.mjs check <projectId>`. Its `status` is `generating`,
   `awaiting_input`, `done`, `no_output`, `interrupted`, `stalled`, or `resume_exhausted`. Each check reuses the
-  held owner page while a turn is active (without reloading it), answers a question form when possible, and automatically clicks the
+   held owner page **on standalone only** while a turn is active (without reloading it), answers a question form when possible, and automatically clicks the
   interrupted banner's `Resume` button. `interrupted` means the banner was present but
   could not be resumed; `stalled` means the file tree was stable with no generated files
   and the last message was still the user's prompt. `resume_exhausted` is terminal after
   three consecutive Resume attempts and includes `resumeAttempts`, `maxResumeAttempts`,
   and `problem: "resume_attempts_exhausted"`. `_ds/**` design-system material is not counted
   as generated output.
-- A turn that claude.ai ends inside a thinking block without writing anything is reported as
+- On standalone, a turn that claude.ai ends inside a thinking block without writing anything is reported as
   `no_output` with `cutOff: true` and `problem: "turn_cut_off"`, even when earlier turns left
   files behind (send a follow-up `design_iterate`). While the server still holds the turn's page it
   stays `generating` and the page monitor makes the call.
-- When a turn ends with `ready_for_verification`, the held page stays open up to 5 minutes
+- On standalone, when a turn ends with `ready_for_verification`, the held page stays open up to 5 minutes
   (`CLAUDE_DESIGN_VERIFY_GRACE_MS`) so the background check can report back. If the page shows
   "The background check didn't finish", `design_check` clicks `Re-run check` for a turn that
   produced files (at most twice per project) and returns `generating` with `verificationRerun: true`.
@@ -225,7 +278,7 @@ frontmost tab. Generation still uses its composer page.
 
 ```bash
 # 1. Submit without waiting
-node src/server.mjs create "카드 UI" my-card --no-wait --model opus
+node src/server.mjs create "카드 UI" my-card --no-wait --model opus --without-design-system
 # → { projectId: "...", submitted: true, pending: true }
 
 # 2. Continue with other work...
@@ -247,6 +300,9 @@ node src/server.mjs preview <projectId>
 
 ## Env
 
+- `CLAUDE_DESIGN_BACKEND` — `artifacts` (default) or `standalone` (legacy service closes 2026-12-14)
+- `CLAUDE_DESIGN_STATE_DIR` — artifact/session index directory (default `~/.cache/claude-design-mcp`)
+- `CLAUDE_DESIGN_STALL_MS` — artifacts active-worker inactivity threshold (default `600000`)
 - `CLAUDE_DESIGN_PROFILE` — dedicated Chrome profile dir (default `~/.cache/claude-design-mcp/chrome-profile`)
 - `CLAUDE_DESIGN_CHROME` — path to Google Chrome (default: macOS Google Chrome)
 - `CLAUDE_DESIGN_CDP_PORT` — remote-debugging port (default `9377`)
@@ -307,7 +363,8 @@ successful tokens-only sync, it uses the logged-in Chrome/CDP session to replace
   packages author a real root `styles.css`) skips flatten with no `flattenError`. A post-sync
   browser/write failure is reported as `flattenError` while the completed upload remains `ok: true`.
 
-`design_system_list` (CLI: `list-systems`) is the read side of the same feature. claude.ai has no
+With artifacts, `design_system_list` (CLI: `list-systems`) reads Design System type instances
+and returns `[{ name, id, publishedAt?, isDefault? }]`. With standalone, claude.ai has no
 separate design-systems endpoint — design systems are returned by the ordinary project list RPC
 tagged `PROJECT_TYPE_DESIGN_SYSTEM`, which pages 20 at a time, so the tool follows every page and
 returns `[{ name, id, publishedAt?, viewedAt? }]` (`publishedAt` appears only once a system has
@@ -315,6 +372,9 @@ been published). Use it to confirm what `design_system_sync` actually landed on 
 `scripts/probe-design-systems.mjs` re-captures that live shape if the API changes.
 
 ## When is a generation "done"?
+
+For artifacts, use the Cowork result/signature mapping in [Backends](#backends).
+The network quiet/stability behavior below applies **only to standalone**.
 
 `claude.ai/design` drives generation as **turns**: your prompt streams in over a `Chat` RPC,
 kept alive by `RenewTurn` keepalives (~every 10s) and ended by a `ReleaseTurn`. `design_create` /

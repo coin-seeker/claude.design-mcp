@@ -11,7 +11,7 @@ import { getManifest, artifactSignature } from './manifest.mjs';
 import { readAllEvents, isRealPrompt, EMPTY_SIGNATURE } from './turn.mjs';
 import * as composer from './composer.mjs';
 import { confirmSubmitted, holdUntilSettled, waitForArtifactTurn } from './generation-wait.mjs';
-import { artifactIdFromUrl } from './surface.mjs';
+import { artifactIdFromUrl, parseDesignLocation } from './surface.mjs';
 import { readChatMessages, chatPromptCount, chatIdle, findWorkspaceSessionId } from './chat-turn.mjs';
 
 export { confirmSubmitted, holdUntilSettled } from './generation-wait.mjs';
@@ -95,11 +95,12 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       const result = await finishTurn(page, scoped, { ...created, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 360_000) }, deps);
       return { ...result, name };
     } catch (error) {
-      const projectId = created?.projectId ?? artifactIdFromUrl(page.url?.());
+      const location = created ?? parseDesignLocation(page.url?.() ?? '');
+      const projectId = location?.projectId ?? artifactIdFromUrl(page.url?.());
       if (projectId && !sent) {
         await deps.frameRequest(scoped, 'DELETE', `/api/frame/${encodeURIComponent(projectId)}`).catch(() => {});
         // Deleting the artifact leaves its Cowork session active in the sidebar; the web app deletes it separately.
-        if (created?.sessionId) await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(created.sessionId)}`, 'DELETE').catch(() => {});
+        if (location?.sessionId) await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(location.sessionId)}`, 'DELETE').catch(() => {});
         try { deps.removeEntry(projectId); } catch { /* Preserve the original failure on cleanup errors. */ }
       }
       throw error;

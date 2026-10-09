@@ -20,7 +20,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // client injects for the call history. The dispatcher strips it, so no handler ever receives it as an argument.
 const CALLER_PROPERTY = { caller: { type: 'object' } };
 const EFFORT_PROPERTY = { type: 'string', description: 'Composer effort: low | medium | high | extra | max (xhigh is an alias of extra). Defaults to extra. If the composer cannot be set to the effort (explicit or default) the call fails before the prompt is sent; question-form Continue and interruption Resume re-apply it after a page reload.' };
-const schema = (properties, required = []) => ({ type: 'object', properties: { ...properties, ...CALLER_PROPERTY }, required });
+const schema = (properties, required = []) => ({ type: 'object', properties: { ...properties, ...CALLER_PROPERTY, account: { type: 'string', enum: ['main', 'sub'] } }, required });
 export const STANDALONE_TOOLS = [
   { name: 'design_login', description: 'Open Chrome for claude.ai/design login and report the active account.', inputSchema: schema({}) },
   { name: 'design_list', description: 'List Claude Design projects from the logged-in web account. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab. Optional limit reads only the first N projects (ListProjects is ordered favourites first, then most recently viewed); with details:true, detailsFor restricts file stats to those projectIds.', inputSchema: schema({ details: { type: 'boolean' }, limit: { type: 'number' }, detailsFor: { type: 'array', items: { type: 'string' } } }) },

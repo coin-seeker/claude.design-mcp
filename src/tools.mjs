@@ -8,6 +8,10 @@ import { pullArtifact } from './artifacts/pull.mjs';
 import { resolveDesign } from './artifacts/listing.mjs';
 import { artifactsPreview } from './artifacts/preview.mjs';
 import { artifactsSystemSync } from './artifacts/ds-sync.mjs';
+import { withAccount } from './accounts.mjs';
+import { resolveAccountFor } from './account-routing.mjs';
+
+export { resolveAccountFor } from './account-routing.mjs';
 
 export { STANDALONE_IMPL };
 export { createPool, variantPrompt, design_create, design_iterate, design_delete, design_variants, findOrCreateProject } from './standalone-tools.mjs';
@@ -31,7 +35,19 @@ export const ARTIFACTS_IMPL = {
 };
 
 export const IMPL = Object.fromEntries(Object.keys(STANDALONE_IMPL).map((name) => [name,
-  (args, deps) => (designBackend() === 'artifacts' ? ARTIFACTS_IMPL : STANDALONE_IMPL)[name](args, deps),
+  (args = {}, deps) => {
+    const backend = designBackend();
+    const account = resolveAccountFor(name, args, deps);
+    if (backend === 'standalone' && account === 'sub') throw new Error('sub account requires the artifacts backend');
+    return withAccount(account, async () => {
+      const result = await (backend === 'artifacts' ? ARTIFACTS_IMPL : STANDALONE_IMPL)[name](args, deps);
+      if (backend === 'standalone') {
+        if (name === 'design_list' || name === 'design_system_list') return result.map((item) => ({ ...item, account }));
+        if (['design_login', 'design_status', 'design_system_sync'].includes(name)) return { ...result, account };
+      }
+      return result;
+    });
+  },
 ]));
 
 const ARTIFACTS_DESCRIPTIONS = {
@@ -45,7 +61,7 @@ const ARTIFACTS_DESCRIPTIONS = {
 
 export function buildTools(backend) {
   return STANDALONE_TOOLS.map((tool) => ({ ...tool, description: backend === 'standalone' ? tool.description
-    : ARTIFACTS_DESCRIPTIONS[tool.name] ?? tool.description.replaceAll('claude.ai/design', 'Claude Design (claude.ai Design artifact + Cowork session)') }));
+    : `${ARTIFACTS_DESCRIPTIONS[tool.name] ?? tool.description.replaceAll('claude.ai/design', 'Claude Design (claude.ai Design artifact + Cowork session)')} account: main (default) | sub — use sub only when the user explicitly asks` }));
 }
 
 // Invalid configuration must not prevent initialize/tools/list; dispatch still rejects it.

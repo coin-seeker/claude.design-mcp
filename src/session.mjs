@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium as playwrightChromium } from 'playwright-core';
 
 import { ACCOUNTS, currentAccount } from './accounts.mjs';
+import { closeChrome, headlessEnabled, headlessUserAgent, readChromeMode, writeChromeMode } from './chrome-launch.mjs';
 import { cookieOrgExpression, omelette } from './rpc.mjs';
 import { designBackend, homeUrl } from './backend.mjs';
 
@@ -61,21 +62,33 @@ async function chromeVersion(port, fetchImpl) {
   }
 }
 
-export async function launchChrome({ visible = false, fetchImpl = fetch, spawnImpl = spawn } = {}) {
-  const port = cdpPort();
-  await mkdir(profileDir(), { recursive: true });
-  const hiddenArgs = [
-    '--window-position=-2400,-2400',
-    '--window-size=1200,840',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
-    '--disable-background-timer-throttling',
+const BACKGROUND_ARGS = [
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding',
+  '--disable-background-timer-throttling',
+];
+
+// visible = login window; headless (default) = no window/Dock/focus; offscreen = legacy CLAUDE_DESIGN_HEADLESS=0.
+async function modeArgs(mode, userAgentImpl) {
+  if (mode === 'visible') return ['--new-window'];
+  if (mode === 'offscreen') return ['--window-position=-2400,-2400', '--window-size=1200,840', ...BACKGROUND_ARGS];
+  // --screen-info replaces headless Chrome's tell-tale 800x600 screen with a laptop-sized one.
+  return [
+    '--headless=new', `--user-agent=${await userAgentImpl(chromeBin())}`,
+    '--screen-info={1440x900}', '--window-size=1200,840', ...BACKGROUND_ARGS,
   ];
+}
+
+export async function launchChrome({ visible = false, fetchImpl = fetch, spawnImpl = spawn, userAgentImpl = headlessUserAgent } = {}) {
+  const port = cdpPort();
+  const profile = profileDir();
+  await mkdir(profile, { recursive: true });
+  const mode = visible ? 'visible' : headlessEnabled() ? 'headless' : 'offscreen';
   const args = [
-    `--user-data-dir=${profileDir()}`,
+    `--user-data-dir=${profile}`,
     `--remote-debugging-port=${port}`,
     '--disable-blink-features=AutomationControlled',
-    ...(visible ? ['--new-window'] : hiddenArgs),
+    ...await modeArgs(mode, userAgentImpl),
     homeUrl(),
   ];
   let launchError = null;
@@ -86,7 +99,10 @@ export async function launchChrome({ visible = false, fetchImpl = fetch, spawnIm
   while (Date.now() < deadline) {
     if (launchError) throw launchError;
     const version = await chromeVersion(port, fetchImpl);
-    if (version) return version;
+    if (version) {
+      await writeChromeMode(profile, mode);
+      return version;
+    }
     await delay(250);
   }
   if (launchError) throw launchError;
@@ -174,7 +190,30 @@ function sessionAlive(session) {
   return session.browser.isConnected?.() !== false && session.page.isClosed?.() !== true;
 }
 
-export async function ensureSession({ visible = false, force = false, fetchImpl = fetch, chromium = playwrightChromium, connect = null } = {}) {
+const LOGIN_PROBE_MS = 10_000;
+
+function rememberSession(account, { browser, page }, ready) {
+  const session = { browser, page, org: ready.org, me: ready.me };
+  cachedSessions.set(account, session);
+  browser.once('disconnected', () => {
+    if (cachedSessions.get(account)?.browser === browser) cachedSessions.delete(account);
+  });
+  return session;
+}
+
+async function readyOrNull(page, timeoutMs) {
+  try {
+    return await waitForReady(page, timeoutMs);
+  } catch (error) {
+    if (error instanceof NotLoggedInError) return null;
+    throw error;
+  }
+}
+
+export async function ensureSession({
+  visible = false, force = false, fetchImpl = fetch, chromium = playwrightChromium, connect = null,
+  spawnImpl = spawn, userAgentImpl = headlessUserAgent, loginProbeMs = LOGIN_PROBE_MS,
+} = {}) {
   const account = currentAccount();
   const cachedSession = cachedSessions.get(account);
   if (cachedSession && !force) {
@@ -182,21 +221,42 @@ export async function ensureSession({ visible = false, force = false, fetchImpl 
     cachedSessions.delete(account);
   }
   const port = cdpPort();
-  try {
-    if (!await chromeVersion(port, fetchImpl)) await launchChrome({ visible, fetchImpl });
+  const profile = profileDir();
+  const isUp = async () => Boolean(await chromeVersion(port, fetchImpl));
+  const launch = (launchVisible) => launchChrome({ visible: launchVisible, fetchImpl, spawnImpl, userAgentImpl });
+  const attach = async () => {
     const cdpUrl = `http://127.0.0.1:${port}`;
     const connectOptions = { noDefaults: true };
     const browser = connect
       ? await connect(cdpUrl, connectOptions)
       : await chromium.connectOverCDP(cdpUrl, connectOptions);
-    const page = await pageFromBrowser(browser);
-    const ready = await waitForReady(page);
-    const session = { browser, page, org: ready.org, me: ready.me };
-    cachedSessions.set(account, session);
-    browser.once('disconnected', () => {
-      if (cachedSessions.get(account)?.browser === browser) cachedSessions.delete(account);
-    });
-    return session;
+    return { browser, page: await pageFromBrowser(browser) };
+  };
+  try {
+    let attached = null;
+    if (await isUp()) {
+      attached = await attach();
+      // Login needs a window only when the running headless profile is not signed in.
+      if (visible && headlessEnabled() && await readChromeMode(profile) === 'headless') {
+        const ready = await readyOrNull(attached.page, loginProbeMs);
+        if (ready) return rememberSession(account, attached, ready);
+        await closeChrome(attached.browser, { isUp, profile });
+        attached = null;
+      }
+    }
+    if (!attached) {
+      await launch(visible);
+      attached = await attach();
+    }
+    const ready = await waitForReady(attached.page);
+    // A finished login moves the signed-in profile back to headless so the window disappears.
+    if (headlessEnabled() && await readChromeMode(profile) === 'visible') {
+      await closeChrome(attached.browser, { isUp, profile });
+      await launch(false);
+      attached = await attach();
+      return rememberSession(account, attached, await waitForReady(attached.page));
+    }
+    return rememberSession(account, attached, ready);
   } catch (error) {
     if (error instanceof NotLoggedInError) throw error;
     const detail = error instanceof Error ? error.message : String(error);

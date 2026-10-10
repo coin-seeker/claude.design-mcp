@@ -8,6 +8,7 @@ import { pullArtifact } from './artifacts/pull.mjs';
 import { resolveDesign } from './artifacts/listing.mjs';
 import { artifactsPreview } from './artifacts/preview.mjs';
 import { artifactsSystemSync } from './artifacts/ds-sync.mjs';
+import { artifactsHistory } from './artifacts/history-tool.mjs';
 import { withAccount } from './accounts.mjs';
 import { resolveAccountFor } from './account-routing.mjs';
 
@@ -31,7 +32,7 @@ export const ARTIFACTS_IMPL = {
   design_iterate: artifactsIterate, design_pull: artifactsPull, design_preview: artifactsPreview,
   design_get: artifactsGet, design_status: artifactsStatus, design_check: artifactsCheck,
   design_edit: artifactsEdit, design_delete: artifactsDelete, design_variants: artifactsVariants,
-  design_system_sync: artifactsSystemSync, design_system_list: artifactsSystemList,
+  design_system_sync: artifactsSystemSync, design_system_list: artifactsSystemList, design_history: artifactsHistory,
 };
 
 export const IMPL = Object.fromEntries(Object.keys(STANDALONE_IMPL).map((name) => [name,
@@ -59,6 +60,7 @@ const ARTIFACTS_DESCRIPTIONS = {
   design_preview: 'Headless artifact PNG; reports truncation at 20000h/10000w/40M pixels.',
   design_get: 'Read artifact file. Background API.',
   design_status: 'Conversation summary/last role. Background API.',
+  design_history: 'Prompt turns (incl. typed in claude.ai) with cost. Background API.',
   design_check: 'API status: generating|awaiting_input|done|no_output|interrupted|stalled. Never auto-approve/resume.',
   design_edit: 'Verified literal file edits via Cowork/chat turn; consumes usage.',
   design_delete: 'Delete artifact. Requires confirm:true and explicit user request. Background API.',

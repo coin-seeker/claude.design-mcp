@@ -48,7 +48,7 @@ function errorText(error) {
   return text(error?.message) ?? String(error);
 }
 
-function normalizeCaller(value) {
+export function normalizeCaller(value) {
   if (!isPlainObject(value)) return null;
   const caller = {};
   for (const key of CALLER_KEYS) {
@@ -76,16 +76,15 @@ function summarizeResult(result) {
   if (backend !== null) summary.backend = backend;
   const projectId = firstText(result.projectId, result.project?.projectId);
   if (projectId !== null) summary.projectId = projectId;
-  if (typeof result.reused === 'boolean') summary.reused = result.reused;
-  if (typeof result.submitted === 'boolean') summary.submitted = result.submitted;
-  if (typeof result.pending === 'boolean') summary.pending = result.pending;
+  for (const key of ['reused', 'submitted', 'pending', 'skipped', 'timedOut']) if (typeof result[key] === 'boolean') summary[key] = result[key];
+  if (typeof result.artifactId === 'string') summary.artifactId = result.artifactId;
+  if (Array.isArray(result.verified?.mismatched)) summary.verifiedMismatched = result.verified.mismatched.length;
+  if (Array.isArray(result.turns)) summary.turns = result.turns.length;
   const status = text(result.status);
   if (status !== null) summary.status = status;
   if (Array.isArray(result.files)) summary.files = result.files.length;
   if (Array.isArray(result.errors)) summary.errors = result.errors.length;
-  if (typeof result.signature === 'string') summary.signature = result.signature;
-  if (typeof result.remoteUpdatedAt === 'string') summary.remoteUpdatedAt = result.remoteUpdatedAt;
-  if (typeof result.timedOut === 'boolean') summary.timedOut = result.timedOut;
+  for (const key of ['signature', 'remoteUpdatedAt']) if (typeof result[key] === 'string') summary[key] = result[key];
   const url = text(result.url);
   if (url !== null) summary.url = url;
   const dir = text(result.dir);
@@ -127,7 +126,8 @@ function attemptIdFor(tool, projectId) {
 // One build per dispatched tools/call: it advances seq and mints the create/iterate attemptId.
 export function buildToolEvent({ tool, args, caller = null, result = null, error = null, durationMs = null, revision = null, account = currentAccount() } = {}) {
   const safeArgs = isPlainObject(args) ? args : {};
-  const ok = !error;
+  const syncRefused = tool === 'design_system_sync' && result?.ok === false;
+  const ok = !error && !syncRefused;
   const projectId = firstText(safeArgs.projectId, result?.projectId, result?.project?.projectId);
   seq += 1;
   return {
@@ -138,10 +138,10 @@ export function buildToolEvent({ tool, args, caller = null, result = null, error
     tool: text(tool),
     durationMs: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
     ok,
-    error: ok ? variantFailureNote(result) : errorText(error),
+    error: ok ? variantFailureNote(result) : errorText(error ?? (syncRefused ? result.error : null)),
     projectId,
     projects: variantProjects(result),
-    projectName: firstText(safeArgs.name, result?.name, result?.project?.name),
+    projectName: firstText(safeArgs.name, result?.name, result?.project?.name, result?.systemName),
     prompt: text(safeArgs.prompt),
     model: text(safeArgs.model),
     designSystem: text(safeArgs.designSystem),

@@ -1,6 +1,8 @@
 import { closePage, logEvent, pageIdentity } from './log.mjs';
 import { createBackgroundDesignPage } from './session.mjs';
 import { homeUrl } from './backend.mjs';
+import { currentAccount } from './accounts.mjs';
+import { beginActivity, endActivity } from './idle-close.mjs';
 
 const OPERATION_PAGE_LEASE_MS = 45 * 60_000;
 const heldOperationPages = new WeakMap();
@@ -30,6 +32,9 @@ function isLiveUserOnly(result) {
 export function holdOperationPage(page, completion, reason, options = {}) {
   const state = { closed: false, reason };
   heldOperationPages.set(page, state);
+  // A held page means an async turn is still settling; it blocks the idle close until released.
+  const account = currentAccount();
+  beginActivity(account);
   const pageId = pageIdentity(page);
   const projectId = options.projectId ? String(options.projectId) : null;
   const timeoutMs = Number(options.leaseTimeoutMs ?? process.env.CLAUDE_DESIGN_PAGE_LEASE_MS ?? OPERATION_PAGE_LEASE_MS);
@@ -67,7 +72,11 @@ export function holdOperationPage(page, completion, reason, options = {}) {
       state.closed = true;
       heldOperationPages.delete(page);
       if (projectId && heldProjectPages.get(projectId) === page) heldProjectPages.delete(projectId);
-      await closePage(page, reason, { projectId });
+      try {
+        await closePage(page, reason, { projectId });
+      } finally {
+        endActivity(account);
+      }
     });
 }
 

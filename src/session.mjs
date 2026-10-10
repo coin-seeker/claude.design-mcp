@@ -5,6 +5,8 @@ import { chromium as playwrightChromium } from 'playwright-core';
 
 import { ACCOUNTS, currentAccount } from './accounts.mjs';
 import { closeChrome, headlessEnabled, headlessUserAgent, readChromeMode, writeChromeMode } from './chrome-launch.mjs';
+import { whenIdleCloseSettled } from './idle-close.mjs';
+import { logEvent } from './log.mjs';
 import { cookieOrgExpression, omelette } from './rpc.mjs';
 import { designBackend, homeUrl } from './backend.mjs';
 
@@ -215,6 +217,7 @@ export async function ensureSession({
   spawnImpl = spawn, userAgentImpl = headlessUserAgent, loginProbeMs = LOGIN_PROBE_MS,
 } = {}) {
   const account = currentAccount();
+  await whenIdleCloseSettled(account);
   const cachedSession = cachedSessions.get(account);
   if (cachedSession && !force) {
     if (sessionAlive(cachedSession)) return cachedSession;
@@ -262,6 +265,41 @@ export async function ensureSession({
     const detail = error instanceof Error ? error.message : String(error);
     throw new SessionStartError(`Chrome/CDP session could not start (port ${port}): ${detail}. Check CLAUDE_DESIGN_CHROME or a conflicting Chrome on this port.`);
   }
+}
+
+const OPERATION_PATH = /^\/(cowork|chat)\/|^\/design\/p\//;
+
+// Idle pages are the background RPC/home tab and browser-internal targets. Operation URLs or any other site
+// mean work this process does not track (a CLI run on the same Chrome), so the close is deferred.
+function idleEligible(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return true; }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+  return parsed.origin === 'https://claude.ai' && !OPERATION_PATH.test(parsed.pathname);
+}
+
+// Runs inside withAccount from the idle scheduler. Never calls ensureSession (which awaits this close).
+export async function closeIdleChrome({ fetchImpl = fetch, chromium = playwrightChromium, closeChromeImpl = closeChrome } = {}) {
+  const account = currentAccount();
+  const port = cdpPort();
+  const profile = profileDir();
+  const isUp = async () => Boolean(await chromeVersion(port, fetchImpl));
+  if (!await isUp()) return { closed: false };
+  const cached = cachedSessions.get(account);
+  const owned = !(cached && sessionAlive(cached));
+  const browser = owned ? await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { noDefaults: true }) : cached.browser;
+  const urls = browser.contexts().flatMap((context) => context.pages()).map((page) => page.url());
+  const busy = urls.filter((url) => !idleEligible(url));
+  if (busy.length) {
+    logEvent('chrome.idle_close_deferred', { account, port, urls: busy });
+    // Disconnects only: Playwright's close() on a CDP-attached browser leaves Chrome running.
+    if (owned) await browser.close().catch((error) => logEvent('chrome.idle_disconnect_failed', { account, error: String(error?.message ?? error) }));
+    return { deferred: true };
+  }
+  await closeChromeImpl(browser, { isUp, profile });
+  if (cachedSessions.get(account)?.browser === browser) cachedSessions.delete(account);
+  logEvent('chrome.idle_close', { account, port, pages: urls.length });
+  return { closed: true };
 }
 
 export async function awaitDesignReady(page, projectId) {

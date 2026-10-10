@@ -10,6 +10,7 @@ import { artifactsPreview } from './artifacts/preview.mjs';
 import { artifactsSystemSync } from './artifacts/ds-sync.mjs';
 import { artifactsHistory } from './artifacts/history-tool.mjs';
 import { withAccount } from './accounts.mjs';
+import { beginActivity, endActivity } from './idle-close.mjs';
 import { resolveAccountFor } from './account-routing.mjs';
 
 export { resolveAccountFor } from './account-routing.mjs';
@@ -41,12 +42,18 @@ export const IMPL = Object.fromEntries(Object.keys(STANDALONE_IMPL).map((name) =
     const account = resolveAccountFor(name, args, deps);
     if (backend === 'standalone' && account === 'sub') throw new Error('sub account requires the artifacts backend');
     return withAccount(account, async () => {
-      const result = await (backend === 'artifacts' ? ARTIFACTS_IMPL : STANDALONE_IMPL)[name](args, deps);
-      if (backend === 'standalone') {
-        if (name === 'design_list' || name === 'design_system_list') return result.map((item) => ({ ...item, account }));
-        if (['design_login', 'design_status', 'design_system_sync'].includes(name)) return { ...result, account };
+      // In-flight calls keep the account's session Chrome from being idle-closed.
+      beginActivity(account);
+      try {
+        const result = await (backend === 'artifacts' ? ARTIFACTS_IMPL : STANDALONE_IMPL)[name](args, deps);
+        if (backend === 'standalone') {
+          if (name === 'design_list' || name === 'design_system_list') return result.map((item) => ({ ...item, account }));
+          if (['design_login', 'design_status', 'design_system_sync'].includes(name)) return { ...result, account };
+        }
+        return result;
+      } finally {
+        endActivity(account);
       }
-      return result;
     });
   },
 ]));

@@ -68,7 +68,8 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
       }, () => readJson('project/tokens.json'));
       const bundleMismatch = pkg.bundle && (index?.namespace !== pkg.bundle.namespace
         || !BUNDLE_LIBRARIES.every((lib) => index?.libraries?.some?.((item) => item?.name === lib.name && String(item?.version).startsWith(lib.version))));
-      if (index && (Object.hasOwn(index, 'editing') || Object.hasOwn(index, 'source') || bundleMismatch)
+      const danglingDocs = (pkg.remove ?? []).some((file) => index?.docs?.sections?.includes?.(`project/${file}`));
+      if (index && (Object.hasOwn(index, 'editing') || Object.hasOwn(index, 'source') || bundleMismatch || danglingDocs)
         && !verified.mismatched.includes('project/design-system.json')) verified.mismatched.push('project/design-system.json');
       return { manifest, verified };
     };

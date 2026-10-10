@@ -62,6 +62,9 @@ export async function readPackage(directory) {
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
+  const published = new Set(['README.md', 'design-system.json', ...files.map((file) => targetPath(file.path)).filter(Boolean)]);
+  const clash = remove.find((item) => published.has(item));
+  if (clash) throw new TypeError(`remove path is also published by this package: ${clash}`);
   return { dir, title: systemTitle(metadata), artifactId, files, remove, bundle: bundleHeader(files) };
 }
 
@@ -82,7 +85,12 @@ function bundleHeader(files) {
   if (!bundle) return null;
   const match = /^\/\*\s*@ds-bundle:\s*(\{.*\})\s*\*\//.exec(bundle.bytes.toString('utf8').split('\n', 1)[0]);
   if (!match) throw new TypeError('components/bundle.js line 1 must be a /* @ds-bundle: {...} */ header');
-  const header = JSON.parse(match[1]);
+  let header;
+  try { header = JSON.parse(match[1]); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new TypeError(`components/bundle.js @ds-bundle header is not valid JSON: ${error.message}`);
+  }
   if (typeof header.namespace !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(header.namespace)) throw new TypeError('components/bundle.js header needs a JS identifier namespace');
   return { namespace: header.namespace };
 }
@@ -137,6 +145,7 @@ export function buildSyncPrompt({ title, created, verbatim, remove = [], bundle 
     ...(remove.length ? [
       'Remove each of these obsolete files by sending it as "project/<path>": null in a files mapping:',
       ...remove.map((file) => `- ${JSON.stringify(`project/${file}`)}`),
+      'In the index, drop every docs.sections entry that names one of those removed paths.',
       'Keep every other existing file. Do not write page-generated manifest.json, tokens.css, or api/ files; do not publish dot-files or toolchain files.',
     ] : ['Keep all other existing files. Do not write page-generated manifest.json, tokens.css, or api/ files; do not publish dot-files or toolchain files.']),
     'If the existing project/design-system.json has editing or source keys, this is Finish the migration: follow that SKILL.md clean-up and remove both keys in the final index call.',

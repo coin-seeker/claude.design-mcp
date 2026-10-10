@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Migrating from standalone Claude Design (closes 2026-12-14)
 
-Version **0.9.3** uses claude.ai **Design artifacts**, backed by a Cowork session or
+Version **0.10.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
 Chat conversation, rather than the retiring standalone `claude.ai/design` service.
 `projectId` is now the artifact UUID; old standalone ids are not interchangeable.
 Legacy standalone projects remain available as **local pulls**, not automatically
@@ -35,6 +35,8 @@ The migration progressed in these releases:
 - **0.9.3:** the artifacts design-system picker re-reads the menu after every click, so a
   system other than the preselected one (and `withoutDesignSystem`) is applied reliably.
   A create that fails before sending also deletes its Cowork session, not just the artifact.
+- **0.10.0:** `design_system_sync` accepts native Design System packages (bundle, list-shaped
+  tokens, removals); see [Design-system sync](#design-system-sync).
 
 ## Using it from OpenCode (claude-design skill)
 
@@ -418,7 +420,8 @@ node src/server.mjs preview <projectId>
 ### Artifacts (default)
 
 `design_system_sync({ dir, model?, effort?, timeoutMs? })` (CLI: `sync <dir> [--timeout-ms ms]`)
-reads a materialized package with **package.json + styles.css**, snapshots its regular files,
+reads a materialized package with **package.json + styles.css** (or, for a native package,
+**components/bundle.css**), snapshots its regular files,
 attaches a zip to a background Cowork/chat session, and publishes a Design System artifact.
 It does not modify the package directory or write a pin automatically.
 
@@ -443,6 +446,13 @@ It does not modify the package directory or write a pin automatically.
   and writes `project/design-system.json` last with the kept title and
   `lastChange.via: "opencode-dashboard sync"`. Migrated indexes finish migration by removing
   `editing` and `source`. Other existing files are kept; page-generated files are not written.
+- **Native packages** (0.10.0) follow the type's file table so designs can mount real components:
+  a root list-shaped `tokens.json` is published verbatim (no conversion), and
+  `components/bundle.js` whose line 1 is `/* @ds-bundle: {"format":4,"namespace":"<Ns>",…} */`
+  makes the index declare `namespace: "<Ns>"` and React/ReactDOM 18 `libraries` (verified after
+  the turn). An optional `remove` array in `.design-sync/config.json` lists obsolete remote
+  paths the turn deletes (`"project/<path>": null`); verification fails while any remains.
+  Standalone-shaped packages produce exactly the same prompt as before.
 - Verification compares the published manifest SHA-256 for every verbatim target, requires
   `project/README.md`, checks the index title, rejects leftover migration keys, and requires a
   non-empty `color.tokens` array when source colors exist. One mismatch triggers **at most one**

@@ -73,7 +73,7 @@ function chatTurns(messages) {
       case 'assistant':
         if (turns.length && text) turns.at(-1).reply = text.slice(0, 500);
         break;
-      default: throw new TypeError(`Unexpected chat sender: ${message.sender}`);
+      default: break; // System/tool senders are not prompts; skip them rather than failing the whole history.
     }
   }
   return turns;

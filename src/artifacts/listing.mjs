@@ -21,7 +21,22 @@ export function artifactUrl(projectId, sessionId, chatId) {
     : `https://claude.ai/code/artifact/${encodeURIComponent(projectId)}`;
 }
 
-export async function listDesigns(scoped, { limit } = {}, overrides = {}) {
+async function designSystemInstances(scoped, deps) {
+  try {
+    const { designSystem } = await deps.resolveTypeSlugs(scoped);
+    const response = await deps.frameRequest(scoped, 'GET', `/api/frame/types/${encodeURIComponent(designSystem)}/instances?limit=50`);
+    if (!Array.isArray(response?.instances) || response.instances.some((item) => typeof item.slug !== 'string' || typeof item.title !== 'string')) {
+      throw new TypeError('Invalid Design System instances');
+    }
+    return response.instances;
+  } catch (error) {
+    // DS discovery is best-effort, like frame-view enrichment.
+    if (!(error instanceof Error)) throw error;
+    return [];
+  }
+}
+
+export async function listDesigns(scoped, { limit, includeDesignSystems = false } = {}, overrides = {}) {
   const deps = { ...READ_DEPS, ...overrides };
   const slugs = await deps.resolveTypeSlugs(scoped);
   const response = await deps.frameRequest(scoped, 'GET', `/api/frame/artifacts?rel=mine&type=${encodeURIComponent(slugs.design)}&limit=${listLimit(limit) ?? 100}`);
@@ -36,7 +51,7 @@ export async function listDesigns(scoped, { limit } = {}, overrides = {}) {
   }
   const viewed = new Map(frames.map((frame) => [frame.slug, toIso(frame.last_viewed_at)]));
   const index = deps.readIndex();
-  return response.artifacts.filter((item) => !item.type_slug || item.type_slug === slugs.design).map((item) => {
+  const designs = response.artifacts.filter((item) => !item.type_slug || item.type_slug === slugs.design).map((item) => {
     if (typeof item.id !== 'string' || typeof item.title !== 'string') throw new TypeError('Invalid Design listing item');
     const updatedAt = toIso(item.updated_at);
     const lastViewed = viewed.get(item.id);
@@ -48,6 +63,14 @@ export async function listDesigns(scoped, { limit } = {}, overrides = {}) {
       ...(entry?.surface === 'chat' ? {} : { sessionId }), account: currentAccount(), backend: 'artifacts', url: artifactUrl(item.id, sessionId, entry?.chatId),
     };
   }).slice(0, listLimit(limit) ?? 100);
+  if (!includeDesignSystems) return designs;
+  const systems = await designSystemInstances(scoped, deps);
+  return [...designs, ...systems.map((item) => {
+    const entry = index.byArtifact[item.slug];
+    const sessionId = entry?.sessionId || null;
+    return { projectId: item.slug, name: item.title, type: 'PROJECT_TYPE_DESIGN_SYSTEM', backend: 'artifacts', sessionId,
+      url: artifactUrl(item.slug, sessionId, entry?.chatId) };
+  })];
 }
 
 // The fourth argument is the adapter DI bag; the first three preserve T3's public contract.
@@ -98,5 +121,8 @@ export async function resolveSessionId(scoped, id, overrides = {}) {
   const indexed = deps.readIndex().byArtifact[id]?.sessionId;
   if (indexed) return indexed;
   const items = await deps.listDesigns(scoped, {}, deps);
-  return items.find((item) => item.projectId === id)?.sessionId || null;
+  const sessionId = items.find((item) => item.projectId === id)?.sessionId;
+  if (sessionId) return sessionId;
+  const systems = await designSystemInstances(scoped, deps);
+  return systems.find((item) => item.slug === id)?.last_edit?.cowork?.[0] || null;
 }

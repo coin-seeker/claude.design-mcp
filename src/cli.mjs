@@ -19,7 +19,7 @@ const SYNC_FLAGS = {
   '--account': { key: 'account' },
 };
 
-const LIST_FLAGS = { '--details': { key: 'details', value: true }, '--limit': { key: 'limit' } };
+const LIST_FLAGS = { '--details': { key: 'details', value: true }, '--limit': { key: 'limit' }, '--design-systems': { key: 'includeDesignSystems', value: true } };
 
 export function parseFlags(args, definitions) {
   const positional = [];

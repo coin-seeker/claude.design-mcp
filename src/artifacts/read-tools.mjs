@@ -52,7 +52,7 @@ export async function readAllEvents(scoped, sessionId, overrides = {}) {
 export async function artifactsList(args = {}, overrides = {}) {
   const deps = { ...READ_DEPS, ...overrides };
   return onRpc(deps, async (scoped) => {
-    const items = await deps.listDesigns(scoped, { limit: args.limit }, deps);
+    const items = await deps.listDesigns(scoped, { limit: args.limit, includeDesignSystems: args.includeDesignSystems === true }, deps);
     const detailed = args.details === true ? await deps.withDesignDetails(scoped, items, args.detailsFor, deps) : items;
     return detailed.map((item) => ({ ...item, account: currentAccount() }));
   });

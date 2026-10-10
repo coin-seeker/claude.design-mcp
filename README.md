@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Migrating from standalone Claude Design (closes 2026-12-14)
 
-Version **0.10.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
+Version **0.11.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
 Chat conversation, rather than the retiring standalone `claude.ai/design` service.
 `projectId` is now the artifact UUID; old standalone ids are not interchangeable.
 Legacy standalone projects remain available as **local pulls**, not automatically
@@ -37,6 +37,8 @@ The migration progressed in these releases:
   A create that fails before sending also deletes its Cowork session, not just the artifact.
 - **0.10.0:** `design_system_sync` accepts native Design System packages (bundle, list-shaped
   tokens, removals); see [Design-system sync](#design-system-sync).
+- **0.11.0:** CLI calls are recorded, `design_history` reads artifact prompt turns, and
+  `design_list` can include Design System artifacts.
 
 ## Using it from OpenCode (claude-design skill)
 
@@ -220,7 +222,7 @@ Re-review this verdict if any of these conditions occurs:
 | Tool | Does |
 |------|------|
 | `design_login` | One-time: open Chrome to log into Claude Design (session persists) |
-| `design_list` | List your Design artifacts (standalone: projects); `details?: true` includes file count, remote update time and signature |
+| `design_list` | List your Design artifacts (standalone: projects); `details?: true` includes file count, remote update time and signature; `includeDesignSystems?: true` appends Design System instances |
 | `design_create` | Create a project and generate a design from a prompt — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `name?`, `wait?`, `model?`, `fresh?` |
 | `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `count?`, `axis?`, `name?`, `preview?`, `model?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?`, `designSystem?` |
@@ -233,6 +235,7 @@ Re-review this verdict if any of these conditions occurs:
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 | `design_system_sync` | Create or update a **Design System artifact** through a usage-consuming Cowork turn — `dir`, `model?`, `effort?`, `timeoutMs?` (standalone: Claude Code `/design-sync`) |
 | `design_system_list` | List Design System instances (name + id + optional publication/default fields); standalone follows the project list |
+| `design_history` | Read prompt turns, assistant replies and turn results for an artifact; artifacts backend only |
 
 Every tool also accepts an optional `caller` object — `{ directory, sessionID, agent, project? }` — that
 the MCP client may inject to say who is calling. It is never a generation argument: the dispatcher strips
@@ -247,7 +250,11 @@ A line carries `v`, `eventId`, `seq`, `ts`, `tool`, `durationMs`, `ok`, `error`,
 `projectName`, `prompt` (verbatim, never truncated), `model`, `designSystem`, `withoutDesignSystem`,
 `withoutDesignSystemReason`, `wait`, `attemptId`, `caller`, `pullKind`, `revision`, `backend`, `sessionId`, `account`, and a whitelisted `result` summary (counts, ids, file signature, and remote update time only — **never** file
 contents, base64, or environment values). Recording is best-effort observability: a failed write only warns
-on stderr and never turns a working tool call into an error. The CLI path is not recorded.
+on stderr and never turns a working tool call into an error. CLI `create`, `iterate`, `check`, `pull`,
+`sync`, and `history` calls also record one line each. Their caller comes from the normalized
+`CLAUDE_DESIGN_CALLER` JSON object, or defaults to `{ "agent": "cli" }`; set
+`CLAUDE_DESIGN_CLI_HISTORY=0` to disable CLI recording. A sync result with `ok: false` is recorded
+as a failed call, including its error.
 
 ### Revision snapshots
 
@@ -305,7 +312,9 @@ node src/server.mjs login
 node src/server.mjs list
 node src/server.mjs list --details
 node src/server.mjs list --limit 20 --details
+node src/server.mjs list --design-systems
 node src/server.mjs list-systems
+node src/server.mjs history <projectId>
 node src/server.mjs create "simple pricing card" pricing --design-system "Frontend Design System"
 node src/server.mjs create "minimal landing page for a coffee shop" coffee --model opus --without-design-system
 node src/server.mjs iterate <projectId> "add a dark mode toggle to the header" --model sonnet
@@ -315,6 +324,12 @@ node src/server.mjs preview <projectId|name> [outDir] [width]
 node src/server.mjs delete <projectId>
 node src/server.mjs sync <packageDir> [--timeout-ms 900000]
 ```
+
+CLI `list --design-systems` appends Design System instances to the project list. CLI
+`history <projectId>` returns prompt turns for an artifacts project. Calls to `create`, `iterate`,
+`check`, `pull`, `sync`, and `history` are recorded by default; set `CLAUDE_DESIGN_CLI_HISTORY=0`
+to disable recording. Set `CLAUDE_DESIGN_CALLER` to a JSON caller object to override the default
+`{ "agent": "cli" }` caller.
 
 After the one-time `login`, reads reuse the Chrome session without changing the
 frontmost tab. Generation still uses its composer page.

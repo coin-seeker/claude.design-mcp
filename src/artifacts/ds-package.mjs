@@ -34,19 +34,22 @@ export async function readPackage(directory) {
       }
     }
   }
-  // Required files must be regular files, never symlinks.
-  for (const required of ['package.json', 'styles.css']) {
-    try {
-      if (!(await lstat(path.join(dir, required))).isFile()) throw new Error(`${required} not found in ${dir}`);
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') throw new Error(`${required} not found in ${dir}`);
+  // Required files must be regular files, never symlinks. A native package carries its stylesheet
+  // as components/bundle.css instead of the standalone deck's root styles.css.
+  const isRegularFile = async (rel) => {
+    try { return (await lstat(path.join(dir, rel))).isFile(); }
+    catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
       throw error;
     }
-  }
+  };
+  if (!(await isRegularFile('package.json'))) throw new Error(`package.json not found in ${dir}`);
+  if (!(await isRegularFile('styles.css')) && !(await isRegularFile('components/bundle.css'))) throw new Error(`styles.css or components/bundle.css not found in ${dir}`);
   await walk();
   const metadata = JSON.parse(files.find((file) => file.path === 'package.json').bytes.toString('utf8'));
   if (!record(metadata)) throw new TypeError('Invalid package.json');
   let artifactId = null;
+  let remove = [];
   try {
     const configDir = path.join(dir, '.design-sync');
     const configPath = path.join(configDir, 'config.json');
@@ -54,11 +57,39 @@ export async function readPackage(directory) {
       const config = JSON.parse(await readFile(configPath, 'utf8'));
       const pin = record(config) ? (currentAccount() === 'main' ? config.artifactId : config.artifactIds?.sub) : null;
       if (typeof pin === 'string' && uuid.test(pin)) artifactId = pin;
+      if (record(config) && config.remove !== undefined) remove = removalPaths(config.remove);
     }
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
-  return { dir, title: systemTitle(metadata), artifactId, files };
+  return { dir, title: systemTitle(metadata), artifactId, files, remove, bundle: bundleHeader(files) };
+}
+
+// Obsolete remote files a re-sync deletes; only plain relative paths are accepted.
+function removalPaths(value) {
+  if (!Array.isArray(value)) throw new TypeError('.design-sync/config.json remove must be an array of paths');
+  return value.map((item) => {
+    if (typeof item !== 'string' || !item || item.startsWith('/') || item.includes('\\') || item.split('/').some((part) => part === '..' || part === '' || part.startsWith('.'))) {
+      throw new TypeError(`Invalid remove path in .design-sync/config.json: ${JSON.stringify(item)}`);
+    }
+    return item;
+  });
+}
+
+// components/bundle.js line 1: /* @ds-bundle: {"format":4,"namespace":"…","components":[…]} */
+function bundleHeader(files) {
+  const bundle = files.find((file) => file.path === 'components/bundle.js');
+  if (!bundle) return null;
+  const match = /^\/\*\s*@ds-bundle:\s*(\{.*\})\s*\*\//.exec(bundle.bytes.toString('utf8').split('\n', 1)[0]);
+  if (!match) throw new TypeError('components/bundle.js line 1 must be a /* @ds-bundle: {...} */ header');
+  const header = JSON.parse(match[1]);
+  if (typeof header.namespace !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(header.namespace)) throw new TypeError('components/bundle.js header needs a JS identifier namespace');
+  return { namespace: header.namespace };
+}
+
+// Prompt options derived from the package; absent for a standalone deck, so its prompt is unchanged.
+export function syncPromptOptions(pkg) {
+  return { remove: pkg.remove ?? [], bundle: pkg.bundle ?? null, listTokens: pkg.files.some((file) => file.path === 'tokens.json') };
 }
 
 export function targetPath(rel) {
@@ -90,7 +121,9 @@ export async function zipPackage(pkg) {
   }
 }
 
-export function buildSyncPrompt({ title, created, verbatim }) {
+export const BUNDLE_LIBRARIES = [{ name: 'react', version: '18' }, { name: 'react-dom', version: '18' }];
+
+export function buildSyncPrompt({ title, created, verbatim, remove = [], bundle = null, listTokens = false }) {
   return [
     'Sync the attached materialized design-system package. This is unattended: do not ask questions or request confirmation; complete the sync now.',
     'Unzip the attachment in your working folder. Follow this Design System artifact\'s SKILL.md and format.md.',
@@ -98,10 +131,18 @@ export function buildSyncPrompt({ title, created, verbatim }) {
     'Publish EACH file listed below byte-for-byte to its project/ target using the Artifact tool with root and files mapping. Never retype file contents and never use base64.',
     ...verbatim.map((file) => `- ${JSON.stringify(file.path)} -> ${JSON.stringify(`project/${file.target ?? targetPath(file.path)}`)}`),
     'Write project/README.md from readme.md (or README.md), preserving the brand book and the author\'s words.',
-    'Write project/tokens.json in the required list shape, converting tokens/tokens.json according to format.md (color.tokens must be a non-empty array when the source has colors).',
-    'Keep all other existing files. Do not write page-generated manifest.json, tokens.css, or api/ files; do not publish dot-files or toolchain files.',
+    listTokens
+      ? 'project/tokens.json is published verbatim above: it is already in the required list shape, so do not convert or rewrite it.'
+      : 'Write project/tokens.json in the required list shape, converting tokens/tokens.json according to format.md (color.tokens must be a non-empty array when the source has colors).',
+    ...(remove.length ? [
+      'Remove each of these obsolete files by sending it as "project/<path>": null in a files mapping:',
+      ...remove.map((file) => `- ${JSON.stringify(`project/${file}`)}`),
+      'Keep every other existing file. Do not write page-generated manifest.json, tokens.css, or api/ files; do not publish dot-files or toolchain files.',
+    ] : ['Keep all other existing files. Do not write page-generated manifest.json, tokens.css, or api/ files; do not publish dot-files or toolchain files.']),
     'If the existing project/design-system.json has editing or source keys, this is Finish the migration: follow that SKILL.md clean-up and remove both keys in the final index call.',
-    `Write project/design-system.json LAST with title exactly ${JSON.stringify(title)} and lastChange.via = "opencode-dashboard sync".`,
+    bundle
+      ? `Write project/design-system.json LAST with title exactly ${JSON.stringify(title)}, namespace exactly ${JSON.stringify(bundle.namespace)} (the bundle's global), libraries exactly ${JSON.stringify(BUNDLE_LIBRARIES)}, and lastChange.via = "opencode-dashboard sync".`
+      : `Write project/design-system.json LAST with title exactly ${JSON.stringify(title)} and lastChange.via = "opencode-dashboard sync".`,
     'Publish the finished artifact and reply with one line when done.',
   ].join('\n');
 }
@@ -116,6 +157,7 @@ export async function verifySync(manifestFiles, pkg, title, readIndexTitle, read
     if (remote.get(target)?.sha256 !== file.sha256) mismatched.push(target);
     else files++;
   }
+  for (const file of pkg.remove ?? []) if (remote.has(`project/${file}`)) mismatched.push(`project/${file}`);
   if (!remote.has('project/README.md')) mismatched.push('project/README.md');
   if (!remote.has('project/design-system.json') || await readIndexTitle() !== title) mismatched.push('project/design-system.json');
   const source = pkg.files.find((file) => file.path === 'tokens/tokens.json');

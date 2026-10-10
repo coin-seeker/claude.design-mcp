@@ -11,7 +11,7 @@ import { artifactUrl } from './listing.mjs';
 import { readAllEvents, isRealPrompt, EMPTY_SIGNATURE } from './turn.mjs';
 import { confirmSubmitted } from './generate.mjs';
 import { waitForArtifactTurn } from './generation-wait.mjs';
-import { readPackage, zipPackage, verbatimFiles, buildSyncPrompt, verifySync } from './ds-package.mjs';
+import { readPackage, zipPackage, verbatimFiles, buildSyncPrompt, verifySync, syncPromptOptions, BUNDLE_LIBRARIES } from './ds-package.mjs';
 import { openNewDesignSystem, openDesignSystemChat, waitForInput, applyModelArtifacts, applyEffortArtifacts, attachFile, sendPrompt } from './composer.mjs';
 import { artifactIdFromUrl } from './surface.mjs';
 import { readChatMessages, chatPromptCount, findWorkspaceSessionId } from './chat-turn.mjs';
@@ -66,7 +66,9 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
         index = await readJson('project/design-system.json');
         return index?.title;
       }, () => readJson('project/tokens.json'));
-      if (index && (Object.hasOwn(index, 'editing') || Object.hasOwn(index, 'source'))
+      const bundleMismatch = pkg.bundle && (index?.namespace !== pkg.bundle.namespace
+        || !BUNDLE_LIBRARIES.every((lib) => index?.libraries?.some?.((item) => item?.name === lib.name && String(item?.version).startsWith(lib.version))));
+      if (index && (Object.hasOwn(index, 'editing') || Object.hasOwn(index, 'source') || bundleMismatch)
         && !verified.mismatched.includes('project/design-system.json')) verified.mismatched.push('project/design-system.json');
       return { manifest, verified };
     };
@@ -98,7 +100,7 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
         progress('Attaching design-system package');
         await deps.attachFile(page, archive.path, path.basename(archive.path));
         let baseline = target ? deps.artifactSignature((await deps.getManifest(scoped, projectId, deps)).files) : EMPTY_SIGNATURE;
-        let prompt = deps.buildSyncPrompt({ title, created: !target, verbatim: deps.verbatimFiles(pkg) });
+        let prompt = deps.buildSyncPrompt({ title, created: !target, verbatim: deps.verbatimFiles(pkg), ...syncPromptOptions(pkg) });
         for (let attempt = 0; attempt < 2; attempt++) {
           const before = opened.surface === 'chat' ? chatPromptCount(await deps.readChatMessages(scoped, opened.chatId, deps))
             : (await deps.readAllEvents(scoped, sessionId, deps)).filter(isRealPrompt).length;
@@ -119,7 +121,7 @@ export async function artifactsSystemSync(args = {}, overrides = {}) {
           result = { ...result, verified };
           if (!verified.mismatched.length) return { ...result, ok: true };
           baseline = deps.artifactSignature(manifest.files);
-          prompt = `Correct the previous sync. Verification failed for these paths:\n${verified.mismatched.map((file) => `- ${file}`).join('\n')}\n${deps.buildSyncPrompt({ title, created: false, verbatim: deps.verbatimFiles(pkg) })}`;
+          prompt = `Correct the previous sync. Verification failed for these paths:\n${verified.mismatched.map((file) => `- ${file}`).join('\n')}\n${deps.buildSyncPrompt({ title, created: false, verbatim: deps.verbatimFiles(pkg), ...syncPromptOptions(pkg) })}`;
         }
         return { ...result, error: `Design System verification failed: ${result.verified.mismatched.join(', ')}` };
       } catch (error) {

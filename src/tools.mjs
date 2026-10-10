@@ -63,7 +63,7 @@ const ARTIFACTS_DESCRIPTIONS = {
   design_edit: 'Verified literal file edits via Cowork/chat turn; consumes usage.',
   design_delete: 'Delete artifact. Requires confirm:true and explicit user request. Background API.',
   design_variants: 'Async artifacts, max 3 concurrent; poll ids with design_check. Require designSystem XOR withoutDesignSystem:true. No preview.',
-  design_system_sync: 'Package zip (package.json + styles.css) to Design System Cowork/chat; SHA-256 verification. Consumes turns unless precheck skips.',
+  design_system_sync: 'Package zip (package.json + styles.css or components/bundle.css) to Design System Cowork/chat; SHA-256 verification. Consumes turns unless precheck skips.',
   design_system_list: 'List account Design Systems. Background API.',
 };
 

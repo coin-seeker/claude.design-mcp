@@ -6,12 +6,14 @@ import { resolveAccountFor } from './account-routing.mjs';
 import { withAccount } from './accounts.mjs';
 import { idleCloseMs, startIdleClose } from './idle-close.mjs';
 import { closeIdleChrome } from './session.mjs';
+import { pathToFileURL } from 'node:url';
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
 }
 
-async function handle(message) {
+export async function handle(message, overrides = {}) {
+  const deps = { IMPL, send, resolveAccountFor, snapshotForToolCall, recordToolCall, ...overrides };
   const { id, method, params } = message;
   if (method === 'initialize') {
     send({ jsonrpc: '2.0', id, result: {
@@ -32,7 +34,7 @@ async function handle(message) {
     return;
   }
   if (method === 'tools/call') {
-    const fn = IMPL[params?.name];
+    const fn = deps.IMPL[params?.name];
     if (!fn) {
       send({ jsonrpc: '2.0', id, error: { code: -32601, message: `unknown tool ${params?.name}` } });
       return;
@@ -42,7 +44,7 @@ async function handle(message) {
     let outcome;
     let account = null;
     try {
-      account = resolveAccountFor(params.name, rest);
+      account = deps.resolveAccountFor(params.name, rest);
       const result = await fn(rest);
       outcome = { result, text: JSON.stringify(result, null, 2) };
     } catch (error) {
@@ -50,11 +52,11 @@ async function handle(message) {
     }
     const durationMs = Date.now() - startedAt; // measured before the snapshot: copying is not tool time
     // Post-processing only; a refused or failed snapshot just yields revision: null.
-    const revision = snapshotForToolCall({ tool: params.name, args: rest, result: outcome.result, error: outcome.error });
+    const revision = deps.snapshotForToolCall({ tool: params.name, args: rest, result: outcome.result, error: outcome.error });
     // Exactly one history line per dispatch, success or failure; recordToolCall never throws.
-    recordToolCall({ tool: params.name, args: rest, caller, result: outcome.result, error: outcome.error, durationMs, revision, account });
-    if (outcome.error) send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `error: ${outcome.error.message}` }], isError: true } });
-    else send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: outcome.text }] } });
+    deps.recordToolCall({ tool: params.name, args: rest, caller, result: outcome.result, error: outcome.error, durationMs, revision, account });
+    if (outcome.error) deps.send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `error: ${outcome.error.message}` }], isError: true } });
+    else deps.send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: params.name === 'design_pull' ? JSON.stringify({ ...outcome.result, revision }, null, 2) : outcome.text }] } });
     return;
   }
   if (id !== undefined) send({ jsonrpc: '2.0', id, error: { code: -32601, message: `unknown method ${method}` } });
@@ -130,5 +132,7 @@ async function runCli(argv) {
   }
 }
 
-if (process.argv.slice(2).length) runCli(process.argv.slice(2));
-else runMcp();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.slice(2).length) runCli(process.argv.slice(2));
+  else runMcp();
+}

@@ -6,6 +6,7 @@ import { checkDesignRpc } from './check-rpc.mjs';
 import { listDesignSystems } from './list-systems.mjs';
 import { listLimit, readListing } from './list-details.mjs';
 import { previewProject } from './preview.mjs';
+import { validateClip } from './preview-capture.mjs';
 import { editProjectFile, getProjectFile, isTextProjectFile } from './project-file.mjs';
 import { listAllFiles, listProjects, pullProject, resolveProject, deleteProject } from './pull.mjs';
 import { omelette } from './rpc.mjs';
@@ -27,7 +28,7 @@ export const STANDALONE_TOOLS = [
   { name: 'design_create', description: 'Create a Claude Design project and submit the initial prompt through the composer. With an explicit name, an existing project of that name is reused unless fresh is true. Grounding is mandatory: pass exactly one of designSystem (a name from design_system_list / list_claude_synced_systems) or withoutDesignSystem: true (optionally with withoutDesignSystemReason), never both, never neither. The call is refused before any browser or project is created.', inputSchema: schema({ prompt: { type: 'string' }, name: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: EFFORT_PROPERTY, designSystem: { type: 'string' }, withoutDesignSystem: { type: 'boolean' }, withoutDesignSystemReason: { type: 'string' }, fresh: { type: 'boolean' } }, ['prompt']) },
   { name: 'design_iterate', description: 'Submit a follow-up prompt to an existing Claude Design project. designSystem only works while the project has produced no design yet, because claude.ai hides the composer picker afterwards.', inputSchema: schema({ projectId: { type: 'string' }, prompt: { type: 'string' }, wait: { type: 'boolean' }, model: { type: 'string' }, effort: EFFORT_PROPERTY, designSystem: { type: 'string' } }, ['projectId', 'prompt']) },
   { name: 'design_pull', description: 'Pull one Claude Design project by projectId or exact name into a local directory. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, dir: { type: 'string' }, zip: { type: 'boolean' } }) },
-  { name: 'design_preview', description: 'Render a project HTML with its project assets to a PNG for visual review; renders headless. Captures are capped at 20000px high and 10000px wide (40M pixels) and report truncation when capped. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }) },
+  { name: 'design_preview', description: 'Render project HTML headless. path accepts ?query/#hash; optional clip crops in CSS px. Caps: 20000h/10000w/40M pixels. Never navigates the session page.', inputSchema: schema({ projectId: { type: 'string' }, name: { type: 'string' }, path: { type: 'string' }, dir: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' }, clip: { type: 'object', description: 'CSS px; bounds <= 10000w/20000h, area <= 40M pixels.', required: ['x', 'y', 'width', 'height'], properties: { x: { type: 'number', minimum: 0 }, y: { type: 'number', minimum: 0 }, width: { type: 'number', exclusiveMinimum: 0, maximum: 10000 }, height: { type: 'number', exclusiveMinimum: 0, maximum: 20000 } } } }) },
   { name: 'design_get', description: 'Read one file from a Claude Design project. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab.', inputSchema: schema({ projectId: { type: 'string' }, path: { type: 'string' } }, ['projectId', 'path']) },
   { name: 'design_status', description: 'Summarize project data, chat count, and last message role. Read-only RPC in an existing background claude.ai page; never opens, focuses, or navigates a visible tab.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
   { name: 'design_history', description: 'Prompt history requires the artifacts backend.', inputSchema: schema({ projectId: { type: 'string' } }, ['projectId']) },
@@ -218,12 +219,13 @@ export async function design_delete(args = {}, overrides = {}) {
 }
 
 async function design_preview(args = {}, overrides = {}) {
+  const clip = validateClip(args.clip);
   const deps = { ...READ_DEPS, ...overrides };
   const session = await deps.ensureSession({ visible: false });
   return deps.withRpcPage(session, async (page) => {
     const scoped = { ...session, page };
     const project = await deps.resolveProject(scoped, { projectId: args.projectId, name: args.name });
-    return deps.previewProject(scoped, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height, projectName: project.name });
+    return deps.previewProject(scoped, project.projectId, { path: args.path, out: args.dir, width: args.width, height: args.height, clip, projectName: project.name });
   });
 }
 

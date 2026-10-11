@@ -64,7 +64,7 @@ const ARTIFACTS_DESCRIPTIONS = {
   design_create: 'Create/reuse artifact; fresh forces new. Require designSystem XOR withoutDesignSystem:true. wait:false is async.',
   design_iterate: 'Follow-up prompt; designSystem reselects if picker exists. wait:false submits async.',
   design_pull: 'Download artifact by id/name. No dir/zip records revision. Background API.',
-  design_preview: 'Headless artifact PNG; reports truncation at 20000h/10000w/40M pixels.',
+  design_preview: 'Headless artifact PNG; path accepts ?query/#hash; optional CSS-pixel clip. Caps: 20000h/10000w/40M pixels.',
   design_get: 'Read artifact file. Background API.',
   design_status: 'Conversation summary/last role. Background API.',
   design_history: 'Prompt turns (incl. typed in claude.ai) with cost. Background API.',

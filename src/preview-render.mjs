@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks';
 
 import { chromium as playwrightChromium } from 'playwright-core';
 
-import { capturePlan, normalizeViewport } from './preview-capture.mjs';
+import { capturePlan, normalizeViewport, validateClip } from './preview-capture.mjs';
 import { closePage, logEvent } from './log.mjs';
 import { createPreviewRoute, encodedProjectUrl, missingAssetsError } from './preview-route.mjs';
 import { chromeBin } from './session.mjs';
@@ -107,6 +107,7 @@ async function waitForFonts(page, timeoutMs) {
 }
 
 export async function renderProjectToPng(assets, targetPath, outFile, options = {}) {
+  const clip = validateClip(options.clip);
   const viewport = normalizeViewport({ width: options.width, height: options.height });
   const attemptNumber = Number(options.attemptNumber || 1);
   const attemptBudgetMs = Math.max(1, Number(options.attemptBudgetMs ?? options.timeoutMs ?? 35_000));
@@ -194,7 +195,7 @@ export async function renderProjectToPng(assets, targetPath, outFile, options = 
     }
     assertRunning(state);
 
-    await page.goto(targetUrl, {
+    await page.goto(targetUrl + (options.suffix || ''), {
       waitUntil: 'networkidle',
       timeout: Math.max(1, Math.floor(state.remaining())),
     });
@@ -209,7 +210,7 @@ export async function renderProjectToPng(assets, targetPath, outFile, options = 
     const pageSize = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight }));
     assertRunning(state);
     if (fatalMissing.size) throw missingAssetsError(fatalMissing);
-    const plan = capturePlan(pageSize, viewport);
+    const plan = capturePlan(pageSize, viewport, clip);
 
     await mkdir(path.dirname(outFile), { recursive: true });
     assertRunning(state);

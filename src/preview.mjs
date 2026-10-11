@@ -13,6 +13,8 @@ import {
 import { renderProjectToPng } from './preview-render.mjs';
 import { omelette } from './rpc.mjs';
 import { chromeBin } from './session.mjs';
+import { validateClip } from './preview-capture.mjs';
+import { previewFilename, splitPreviewPath } from './preview-path.mjs';
 
 export { renderProjectToPng } from './preview-render.mjs';
 
@@ -114,6 +116,8 @@ function renderOptions(options, deps, dl, attemptNumber, attemptBudgetMs, sessio
   return {
     width: options.width,
     height: options.height,
+    clip: options.clip,
+    suffix: options.suffix,
     sessionBrowser,
     chromium: deps.chromium || playwrightChromium,
     executablePath: deps.executablePath || chromeBin(),
@@ -174,6 +178,9 @@ async function renderWithRetry(assets, targetPath, outFile, options, deps, dl) {
 }
 
 export async function previewProject(session, projectId, options = {}, deps = {}) {
+  const clip = validateClip(options.clip);
+  const requested = splitPreviewPath(options.path);
+  options = { ...options, clip, suffix: requested.suffix };
   const timeoutMs = Number(deps.timeoutMs ?? PREVIEW_TIMEOUT_MS);
   const cancel = { cancelled: false };
   const dl = createDeadline(timeoutMs, cancel, deps.now);
@@ -199,7 +206,7 @@ export async function previewProject(session, projectId, options = {}, deps = {}
       dl.signal,
     ]);
     assertDeadline(dl);
-    const targetPath = pickHtmlPath(entries, options.path);
+    const targetPath = pickHtmlPath(entries, requested.path);
     if (!targetPath) throw new Error('design_preview: no HTML file found to render in project');
     const requiredKey = canonicalMapKey(targetPath);
     const listedTarget = entries.find((entry) => entry?.type !== 'directory' && entry?.path && canonicalMapKey(entry.path) === requiredKey);
@@ -219,11 +226,11 @@ export async function previewProject(session, projectId, options = {}, deps = {}
 
     const baseDir = path.resolve(expandHome(options.out || previewOut()));
     const outDir = options.out ? baseDir : path.join(baseDir, sanitizeName(options.projectName || projectId));
-    const outFile = path.join(outDir, `${sanitizeName(String(targetPath).replace(/[\\/]+/g, '-'))}.png`);
+    const outFile = path.join(outDir, previewFilename(targetPath, requested.suffix));
     const rendered = await renderWithRetry(fetched.assets, targetPath, outFile, options, deps, dl);
     return {
       projectId,
-      path: String(targetPath).normalize('NFC'),
+      path: `${targetPath}${requested.suffix}`.normalize('NFC'),
       image: outFile.normalize('NFC'),
       pageSize: rendered.pageSize,
       capturedSize: rendered.capturedSize,

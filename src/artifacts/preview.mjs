@@ -3,10 +3,12 @@ import { previewProject } from '../preview.mjs';
 import { resolveDesign } from './listing.mjs';
 import { getManifest } from './manifest.mjs';
 import { loadArtifactAssets } from './assets.mjs';
+import { validateClip } from '../preview-capture.mjs';
 
 const PREVIEW_DEPS = { ensureSession, withRpcPage, previewProject, resolveDesign, getManifest };
 
 export async function artifactsPreview(args = {}, overrides = {}) {
+  const clip = validateClip(args.clip);
   const deps = { ...PREVIEW_DEPS, ...overrides };
   const session = await deps.ensureSession({ visible: false });
   return deps.withRpcPage(session, async (page) => {
@@ -17,7 +19,7 @@ export async function artifactsPreview(args = {}, overrides = {}) {
     const entries = [...assets.values()].map((asset) => ({ path: asset.path, type: 'file', contentType: asset.contentType }));
     const result = await deps.previewProject(scoped, design.projectId, {
       path: args.path?.replace(/^project\//, ''), out: args.dir ?? args.out,
-      width: args.width, height: args.height, projectName: design.name,
+      width: args.width, height: args.height, clip, projectName: design.name,
     }, {
       ...deps,
       listPage: async () => ({ entries, total: entries.length }),

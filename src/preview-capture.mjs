@@ -11,7 +11,19 @@ function positiveInteger(value, fallback) {
   return Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
 }
 
-export function capturePlan(pageSize, viewportSize) {
+export function validateClip(clip) {
+  if (clip === undefined) return undefined;
+  const invalid = () => new Error('design_preview: clip must be {x,y,width,height} with finite CSS-pixel numbers, x/y >= 0, width/height > 0, bounds <= 10000w/20000h and area <= 40M pixels');
+  if (!clip || typeof clip !== 'object' || Array.isArray(clip)) throw invalid();
+  const { x, y, width, height } = clip;
+  if (![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0
+    || x + width > MAX_CAPTURE_WIDTH || y + height > MAX_CAPTURE_HEIGHT || width * height > MAX_CAPTURE_PIXELS) throw invalid();
+  return { x, y, width, height };
+}
+
+export function capturePlan(pageSize, viewportSize, requestedClip) {
+  const clip = validateClip(requestedClip);
+  if (clip) return { fullPage: false, clip, capturedSize: { width: clip.width, height: clip.height }, truncated: false };
   const viewport = normalizeViewport(viewportSize);
   const pageWidth = positiveInteger(pageSize?.width, viewport.width);
   const pageHeight = positiveInteger(pageSize?.height, viewport.height);

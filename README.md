@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Migrating from standalone Claude Design (closes 2026-12-14)
 
-Version **0.13.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
+Version **0.14.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
 Chat conversation, rather than the retiring standalone `claude.ai/design` service.
 `projectId` is now the artifact UUID; old standalone ids are not interchangeable.
 Legacy standalone projects remain available as **local pulls**, not automatically
@@ -43,6 +43,8 @@ The migration progressed in these releases:
   `CLAUDE_DESIGN_HEADLESS=0` restores the off-screen window.
 - **0.13.0:** the MCP server closes an idle session Chrome after 20 minutes
   (`CLAUDE_DESIGN_IDLE_CLOSE_MS`); the next call relaunches it headless.
+- **0.14.0:** preview paths accept query/hash state and optional CSS-pixel `clip`;
+  successful MCP pulls return their snapshot `revision` (string or null).
 
 ## Using it from OpenCode (claude-design skill)
 
@@ -62,7 +64,7 @@ Typical skill-driven flow:
 2. Worker polls `design_check({projectId})`; report permission/input requests rather
    than approving them automatically.
 3. On `done`, call `design_pull({projectId})` **without `dir` or `zip`**. The skill's
-   dashboard-registration gate uses this default pull and its history/revision record.
+   dashboard-registration gate uses this default pull's returned `revision` and history record.
 4. Review locally, then `design_iterate({projectId, prompt, wait:false})`, check and
    default-pull again. This is the skill policy; raw MCP create/iterate default to `wait:true`.
 
@@ -231,7 +233,7 @@ Re-review this verdict if any of these conditions occurs:
 | `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `count?`, `axis?`, `name?`, `preview?`, `model?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?`, `designSystem?` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |
-| `design_preview` | Render a project's self-contained HTML to a full-page PNG for review — `projectId` or `name`, `path?`, `dir?`, `width?` |
+| `design_preview` | Render project HTML to a PNG — `projectId` or `name`, `path?` (query/hash allowed), `dir?`, `width?`, `height?`, `clip?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
 | `design_check` | Poll an asynchronous generation — `projectId`; artifacts status mapping above, `checkPath: "artifacts"`; standalone may recover via `held`, `rpc`, or `ui` |
@@ -270,7 +272,27 @@ order is time order. Each folder carries a `.meta.json` with the per-file SHA-25
 `.staging-<revisionId>/` and atomically renamed, so listers only ever see finished revisions (skip any name
 starting with `.`). A pull whose content hash and completeness both match the previous revision is skipped
 and reports `revision: null`, meaning "unchanged — the previous revision is still current". Snapshot
-failures are non-fatal in the same way: `revision: null` plus an stderr warning, tool result untouched.
+failures are non-fatal in the same way: `revision: null` plus an stderr warning, pull success preserved.
+Every successful MCP `design_pull` JSON response includes `revision` (string or null),
+without changing the result recorded in history. Custom-dir and zip pulls return null;
+null alone does not distinguish unchanged content, ineligible pulls or snapshot failures.
+
+### Preview URL state and cropping
+
+Both backends accept `path: "Stock Detail Tabs.html?stock=INTC&tab=earnings#B"`.
+Only the bare file path is used for listing and asset lookup; the query/hash is appended
+to the renderer's encoded local URL. The result's NFC-normalized `path` includes the
+suffix, and the PNG name uses the bare path plus a sanitized, digest-tagged suffix so
+different URL states do not overwrite each other. Unsuffixed filenames are unchanged.
+
+Optional `clip: {x, y, width, height}` crops in document CSS pixels. All four values
+must be finite numbers: x/y >= 0, width/height > 0, x + width <= 10000,
+y + height <= 20000, and width * height <= 40M. Invalid clips fail before obtaining
+a session or launching a renderer. Keep the requested rectangle inside the page;
+`capturedSize` describes the requested crop, while `pageSize` remains the full page.
+An intentional crop has `truncated:false`; without clip the existing automatic caps apply.
+Preview owns a separate context and never navigates or closes the claude.ai session page.
+See [preview and pull contracts](docs/preview-and-pull.md) for examples.
 
 ## Setup
 

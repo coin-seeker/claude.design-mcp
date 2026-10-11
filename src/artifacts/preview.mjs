@@ -19,7 +19,7 @@ export async function artifactsPreview(args = {}, overrides = {}) {
     const entries = [...assets.values()].map((asset) => ({ path: asset.path, type: 'file', contentType: asset.contentType }));
     const result = await deps.previewProject(scoped, design.projectId, {
       path: args.path?.replace(/^project\//, ''), out: args.dir ?? args.out,
-      width: args.width, height: args.height, clip, projectName: design.name,
+      width: args.width, height: args.height, ...(clip ? { clip } : {}), projectName: design.name,
     }, {
       ...deps,
       listPage: async () => ({ entries, total: entries.length }),

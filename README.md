@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Migrating from standalone Claude Design (closes 2026-12-14)
 
-Version **0.14.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
+Version **0.15.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
 Chat conversation, rather than the retiring standalone `claude.ai/design` service.
 `projectId` is now the artifact UUID; old standalone ids are not interchangeable.
 Legacy standalone projects remain available as **local pulls**, not automatically
@@ -45,6 +45,10 @@ The migration progressed in these releases:
   (`CLAUDE_DESIGN_IDLE_CLOSE_MS`); the next call relaunches it headless.
 - **0.14.0:** preview paths accept query/hash state and optional CSS-pixel `clip`;
   successful MCP pulls return their snapshot `revision` (string or null).
+- **0.15.0:** artifacts `design_check` reads session first (no events while generating,
+  newest-first events back to the latest prompt once idle) and retries one transient
+  timeout; async create/iterate close the Cowork page after submit and a 30 s completion
+  monitor on the shared RPC tab replaces the held page.
 
 ## Using it from OpenCode (claude-design skill)
 
@@ -87,8 +91,13 @@ and results identify `backend: "artifacts"`. Listing and generation URLs use
 session links to `https://claude.ai/code/artifact/<projectId>`. Standalone project URLs
 remain `https://claude.ai/design/p/<projectId>`; ids from one backend are not interchangeable.
 
-`design_check` reads the Cowork session, events and artifact manifest through APIs,
-without navigating the project page or automatically approving permission requests:
+`design_check` reads the Cowork session and artifact manifest through APIs, without
+navigating the project page or automatically approving permission requests. While the
+worker is active (or the session requires action) it reads no events at all; once the
+worker is idle it reads events newest-first only back to the latest real prompt and the
+result before it, so one check costs 1–3 requests instead of every event page. A transient
+timeout (`TimeoutError`, `signal timed out`, `Timeout <n>ms exceeded`) is retried once after
+2 s; HTTP and login errors are not retried. `lastMessageRole` is `null` while generating:
 
 | Status | Artifacts meaning |
 |---|---|
@@ -236,7 +245,7 @@ Re-review this verdict if any of these conditions occurs:
 | `design_preview` | Render project HTML to a PNG — `projectId` or `name`, `path?` (query/hash allowed), `dir?`, `width?`, `height?`, `clip?` |
 | `design_get` | Read one file from a project — `projectId`, `path` |
 | `design_status` | Report a project's chat/turn state — `projectId` |
-| `design_check` | Poll an asynchronous generation — `projectId`; artifacts status mapping above, `checkPath: "artifacts"`; standalone may recover via `held`, `rpc`, or `ui` |
+| `design_check` | Poll an asynchronous generation — `projectId`; artifacts status mapping above (session-first, 1–3 requests, one retry on transient timeout), `checkPath: "artifacts"`; standalone may recover via `held`, `rpc`, or `ui` |
 | `design_edit` | Verified literal file edits via a usage-consuming Cowork turn (standalone: direct RPC) — `projectId`, `path`, `edits` |
 | `design_delete` | Delete a project — `projectId`, `confirm` (must be `true`; the call is rejected without it) |
 | `design_system_sync` | Create or update a **Design System artifact** through a usage-consuming Cowork turn — `dir`, `model?`, `effort?`, `timeoutMs?` (standalone: Claude Code `/design-sync`) |
@@ -451,10 +460,11 @@ node src/server.mjs preview <projectId>
 - `CLAUDE_DESIGN_HISTORY_DIR` — where the `tools/call` history is appended (default `~/.local/share/opencode-dashboard/claude-design-history`, file `events.ndjsonl`)
 - `CLAUDE_DESIGN_HEADLESS` — default: headless Chrome (`--headless=new`; no window, Dock icon or focus change). Set `0` (`false`/`off`/`no`) to use the legacy off-screen window. `design_login` still opens a visible window only when the profile is signed out, and the signed-in profile is relaunched headless once login completes. The mode in use is recorded in `<profile>/.claude-design-chrome-mode`
 - `CLAUDE_DESIGN_USER_AGENT` — headless UA override. Default: the headed reduced UA of the installed Chrome major version (`Chrome/<major>.0.0.0`, read from the bundle `Info.plist` or `--version`), so headless Chrome never advertises `HeadlessChrome`. With a UA override Chrome leaves the high-entropy UA-CH values (`fullVersionList`, `platformVersion`) empty; if a site starts rejecting that, set `CLAUDE_DESIGN_HEADLESS=0`
-- `CLAUDE_DESIGN_IDLE_CLOSE_MS` — MCP server only (never the CLI): gracefully closes an account's session Chrome after this many ms with no tool call in flight and no held async-generation page (default `1200000`, 20 minutes; `0` keeps it running). Login cookies stay in the profile, so the next call simply relaunches it. Tabs this server does not own (operation pages or other sites, e.g. a CLI run on the same Chrome) defer the close by another idle period; a CLI RPC that only uses the home tab can still lose its Chrome at the exact close moment and should be retried
+- `CLAUDE_DESIGN_IDLE_CLOSE_MS` — MCP server only (never the CLI): gracefully closes an account's session Chrome after this many ms with no tool call in flight, no held standalone generation page and no running artifacts completion monitor (default `1200000`, 20 minutes; `0` keeps it running). Login cookies stay in the profile, so the next call simply relaunches it. Tabs this server does not own (operation pages or other sites, e.g. a CLI run on the same Chrome) defer the close by another idle period; a CLI RPC that only uses the home tab can still lose its Chrome at the exact close moment and should be retried
 - `CLAUDE_DESIGN_TURN_TIMEOUT_MS` — hard cap per generation turn (create ~360s, iterate ~240s defaults)
 - `CLAUDE_DESIGN_QUIET_MS` — how long the turn network must stay silent before a generation is judged complete (default `20000`)
-- `CLAUDE_DESIGN_PAGE_LEASE_MS` — independent hard cap for an async owner page if its completion monitor hangs (default `2700000`, 45 minutes)
+- `CLAUDE_DESIGN_PAGE_LEASE_MS` — hard cap for a standalone held owner page and for the artifacts completion monitor (default `2700000`, 45 minutes)
+- `CLAUDE_DESIGN_MONITOR_INTERVAL_MS` — artifacts completion monitor poll interval (default `30000`). After an async create/iterate submit is confirmed the Cowork page is closed; the monitor polls `design_check` on the shared RPC tab and only keeps the idle-close activity marker until the turn settles or the lease ends
 - `CLAUDE_DESIGN_CLAUDE_BIN` — standalone-only Claude Code binary used by sync (default `claude`)
 - `CLAUDE_DESIGN_SYNC_TIMEOUT_MS` — standalone-only hard cap for one `/design-sync` run (default `900000`, 15 minutes); artifacts uses `timeoutMs`
 

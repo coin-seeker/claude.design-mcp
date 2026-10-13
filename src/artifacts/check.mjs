@@ -1,6 +1,7 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { ensureSession } from '../session.mjs';
 import { withRpcPage } from '../operation-pages.mjs';
-import { ccrRequest } from './api.mjs';
+import { ccrRequest, ArtifactsHttpError } from './api.mjs';
 import { readIndex, updateEntry } from './index-store.mjs';
 import { classifyArtifactTurn, readAllEvents, readTurnEvents, FINISHED_BUCKETS } from './turn.mjs';
 import { readChatMessages, classifyChatTurn, findWorkspaceSessionId } from './chat-turn.mjs';
@@ -9,6 +10,7 @@ export { readAllEvents } from './turn.mjs';
 
 // Lazy imports keep classifier/check tests independent of the concurrent T3 work.
 const CHECK_DEPS = {
+  delay,
   ensureSession,
   withRpcPage,
   ccrRequest,
@@ -28,6 +30,18 @@ export async function artifactsCheck(args = {}, overrides = {}) {
   const deps = { ...CHECK_DEPS, ...overrides };
   const projectId = String(args.projectId ?? '').trim();
   if (!projectId) throw new Error('projectId is required');
+  try {
+    return await checkOnce({ ...args, projectId }, deps);
+  } catch (error) {
+    if (error instanceof ArtifactsHttpError || error?.name === 'NotLoggedInError'
+      || !/TimeoutError|signal timed out|Timeout \d+ms exceeded/.test(String(error?.message))) throw error;
+    await deps.delay(2000);
+    return checkOnce({ ...args, projectId }, deps);
+  }
+}
+
+async function checkOnce(args, deps) {
+  const { projectId } = args;
   const session = await deps.ensureSession({ visible: false });
   return deps.withRpcPage(session, async (page) => {
     const scoped = { ...session, page };

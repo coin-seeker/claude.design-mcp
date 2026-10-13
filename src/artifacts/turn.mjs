@@ -110,3 +110,28 @@ export async function readAllEvents(scoped, sessionId, overrides = {}) {
   } while (cursor !== null);
   return events;
 }
+
+export async function readTurnEvents(scoped, sessionId, overrides = {}) {
+  const request = overrides.ccrRequest ?? ccrRequest;
+  const events = [];
+  const cursors = new Set();
+  let cursor = null;
+  let descending = true;
+  do {
+    const path = `/v1/code/sessions/${encodeURIComponent(sessionId)}/events?limit=100${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+    const page = await request(scoped, path);
+    if (!Array.isArray(page?.data)) throw new TypeError('Invalid Cowork events page: expected data array');
+    descending = descending && page.data.every((event, index) => index === 0
+      || BigInt(page.data[index - 1].sequence_num) > BigInt(event.sequence_num));
+    events.push(...page.data.slice(0, 2000 - events.length));
+    cursor = page.next_cursor ?? null;
+    const prompt = newestFirst(events).find(isRealPrompt);
+    if (descending && prompt && events.some((event) => event.payload.type === 'result'
+      && typeof event.payload.total_cost_usd === 'number'
+      && BigInt(event.sequence_num) < BigInt(prompt.sequence_num))) break;
+    if (events.length === 2000 || cursor === null) break;
+    if (cursors.has(cursor)) throw new Error(`Repeated Cowork events cursor: ${cursor}`);
+    cursors.add(cursor);
+  } while (cursor !== null);
+  return events;
+}

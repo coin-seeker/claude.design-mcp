@@ -2,7 +2,7 @@ import { ensureSession } from '../session.mjs';
 import { withRpcPage } from '../operation-pages.mjs';
 import { ccrRequest } from './api.mjs';
 import { readIndex, updateEntry } from './index-store.mjs';
-import { classifyArtifactTurn, readAllEvents } from './turn.mjs';
+import { classifyArtifactTurn, readAllEvents, readTurnEvents, FINISHED_BUCKETS } from './turn.mjs';
 import { readChatMessages, classifyChatTurn, findWorkspaceSessionId } from './chat-turn.mjs';
 
 export { readAllEvents } from './turn.mjs';
@@ -16,6 +16,7 @@ const CHECK_DEPS = {
   updateEntry,
   findWorkspaceSessionId,
   readAllEvents,
+  readTurnEvents,
   readChatMessages,
   resolveSessionId: async (scoped, id) => (await import('./listing.mjs')).resolveSessionId(scoped, id),
   readManifest: async (scoped, id) => (await import('./manifest.mjs')).getManifest(scoped, id),
@@ -55,11 +56,13 @@ export async function artifactsCheck(args = {}, overrides = {}) {
     }
     const sessionId = await deps.resolveSessionId(scoped, projectId);
     if (!sessionId) throw new Error(`no Cowork session found for artifact ${projectId}`);
-    const [state, events, manifest] = await Promise.all([
+    const [state, manifest] = await Promise.all([
       deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(sessionId)}`),
-      deps.readAllEvents(scoped, sessionId, { ccrRequest: deps.ccrRequest }),
       deps.readManifest(scoped, projectId),
     ]);
+    const idle = state.worker_status === 'idle' && FINISHED_BUCKETS.has(state.status_bucket);
+    const events = (state.requires_action_details_list?.length || !idle)
+      ? [] : await deps.readTurnEvents(scoped, sessionId, { ccrRequest: deps.ccrRequest });
     const signature = await deps.signature(manifest.files);
     const entry = deps.readIndex().byArtifact[projectId];
     const turn = classifyArtifactTurn({

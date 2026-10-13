@@ -10,17 +10,17 @@ import { resolveDesign, resolveSessionId, artifactUrl } from './listing.mjs';
 import { getManifest, artifactSignature } from './manifest.mjs';
 import { readAllEvents, isRealPrompt, EMPTY_SIGNATURE } from './turn.mjs';
 import * as composer from './composer.mjs';
-import { confirmSubmitted, holdUntilSettled, waitForArtifactTurn } from './generation-wait.mjs';
+import { confirmSubmitted, monitorUntilSettled, waitForArtifactTurn } from './generation-wait.mjs';
 import { artifactIdFromUrl, parseDesignLocation } from './surface.mjs';
 import { readChatMessages, chatPromptCount, chatIdle, findWorkspaceSessionId } from './chat-turn.mjs';
 
-export { confirmSubmitted, holdUntilSettled } from './generation-wait.mjs';
+export { confirmSubmitted, monitorUntilSettled } from './generation-wait.mjs';
 export { artifactsEdit } from './edit.mjs';
 
 const FLOW_DEPS = {
   ensureSession, withOperationPage, withRpcPage, frameRequest, ccrRequest,
   findByName, updateEntry, removeEntry, readIndex, readChatMessages, findWorkspaceSessionId, resolveDesign, resolveSessionId, getManifest, artifactSignature,
-  readAllEvents, ...composer, confirmSubmitted, holdUntilSettled, waitForArtifactTurn, now: Date.now,
+  readAllEvents, ...composer, confirmSubmitted, monitorUntilSettled, waitForArtifactTurn, now: Date.now,
   artifactsIterate,
 };
 
@@ -30,14 +30,14 @@ function requireString(value, name) {
   return text;
 }
 
-async function finishTurn(page, scoped, turn, deps) {
+async function finishTurn(scoped, turn, deps) {
   const result = { projectId: turn.projectId, url: artifactUrl(turn.projectId, turn.sessionId, turn.chatId), ...(turn.surface === 'chat' ? {} : { sessionId: turn.sessionId }), backend: 'artifacts', model: turn.model, effort: turn.effort, ...turn.echo };
   if (!turn.wait) {
-    deps.holdUntilSettled(page, scoped, turn.projectId, deps);
+    deps.monitorUntilSettled(turn.projectId);
     return { ...result, submitted: true, pending: true };
   }
   const settled = await deps.waitForArtifactTurn(scoped, turn, deps);
-  if (settled.timedOut) deps.holdUntilSettled(page, scoped, turn.projectId, deps);
+  if (settled.timedOut) deps.monitorUntilSettled(turn.projectId);
   return { ...result, ...settled };
 }
 
@@ -92,7 +92,7 @@ export async function artifactsCreate(args = {}, overrides = {}) {
         ? await deps.findWorkspaceSessionId(scoped, created.chatId, deps).catch(() => null) : null;
       deps.updateEntry(projectId, { ...(workspaceSessionId ? { workspaceSessionId } : {}), lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: 1 });
       const echo = system.name ? { designSystem: system.name } : designSystemChoiceEcho(choice);
-      const result = await finishTurn(page, scoped, { ...created, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 360_000) }, deps);
+      const result = await finishTurn(scoped, { ...created, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 360_000) }, deps);
       return { ...result, name };
     } catch (error) {
       const location = created ?? parseDesignLocation(page.url?.() ?? '');
@@ -151,7 +151,7 @@ export async function artifactsIterate(args = {}, overrides = {}) {
     const workspaceSessionId = chat ? entry.workspaceSessionId
       ?? await deps.findWorkspaceSessionId(scoped, chat.chatId, deps).catch(() => null) : null;
     deps.updateEntry(projectId, { sessionId, ...(chat ? { surface: chat.surface, chatId: chat.chatId } : {}), ...(workspaceSessionId ? { workspaceSessionId } : {}), lastSubmitSignature: baseline, submittedAt: new Date(deps.now()).toISOString(), promptCountAtSubmit: before + 1 });
-    return finishTurn(page, scoped, { projectId, sessionId, ...chat, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 240_000) }, deps);
+    return finishTurn(scoped, { projectId, sessionId, ...chat, model: model.apiId, effort: selectedEffort, echo, baseline, wait: args.wait !== false, timeoutMs: Number(args.timeoutMs ?? 240_000) }, deps);
   });
 }
 

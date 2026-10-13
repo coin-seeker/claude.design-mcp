@@ -1,11 +1,15 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { holdOperationPage } from '../operation-pages.mjs';
+import { currentAccount, withAccount } from '../accounts.mjs';
+import { beginActivity, endActivity } from '../idle-close.mjs';
+import { logEvent } from '../log.mjs';
 import { ccrRequest } from './api.mjs';
 import { readAllEvents, isRealPrompt, EMPTY_SIGNATURE } from './turn.mjs';
 import { artifactsCheck } from './check.mjs';
 import { readChatMessages, chatPromptCount } from './chat-turn.mjs';
 
-const WAIT_DEPS = { delay, now: Date.now, ccrRequest, readAllEvents, readChatMessages, artifactsCheck, holdOperationPage };
+const WAIT_DEPS = { delay, now: Date.now, ccrRequest, readAllEvents, readChatMessages, artifactsCheck };
+const MONITOR_DEPS = { delay, now: Date.now, artifactsCheck, beginActivity, endActivity, logEvent };
+const monitors = new Map();
 
 // Fourth argument is the shared DI/options seam, preserving T6's positional public contract.
 export async function confirmSubmitted(scoped, sessionId, promptCountBefore, overrides = {}) {
@@ -37,16 +41,46 @@ function checkOnPage(scoped, projectId, deps) {
   });
 }
 
-export function holdUntilSettled(page, scoped, projectId, overrides = {}) {
-  const deps = { ...WAIT_DEPS, ...overrides };
-  const completion = (async () => {
-    for (;;) {
-      const result = await checkOnPage({ ...scoped, page }, projectId, deps);
-      if (result.status !== 'generating') return { status: result.status, files: result.files, lastMessageRole: 'assistant', terminal: true };
-      await deps.delay(10_000);
+export function monitorUntilSettled(projectId, overrides = {}) {
+  const deps = { ...MONITOR_DEPS, ...overrides };
+  const intervalMs = overrides.intervalMs ?? Number(process.env.CLAUDE_DESIGN_MONITOR_INTERVAL_MS ?? 30_000);
+  const leaseMs = overrides.leaseMs ?? Number(process.env.CLAUDE_DESIGN_PAGE_LEASE_MS ?? 2_700_000);
+  const existing = monitors.get(projectId);
+  if (existing) {
+    existing.deadline = deps.now() + leaseMs;
+    return existing.promise;
+  }
+  const account = currentAccount();
+  const entry = { deadline: deps.now() + leaseMs, promise: null };
+  // Schedule after registration so even an immediately settled check cannot leave a stale entry.
+  entry.promise = Promise.resolve().then(async () => {
+    try {
+      deps.beginActivity(account);
+      deps.logEvent('artifacts.monitor_start', { projectId, account, intervalMs });
+      for (;;) {
+        try {
+          const result = await withAccount(account, () => deps.artifactsCheck({ projectId }));
+          if (result.status !== 'generating') {
+            deps.logEvent('artifacts.monitor_complete', { projectId, status: result.status });
+            return;
+          }
+        } catch (error) {
+          deps.logEvent('artifacts.monitor_poll_failed', { projectId, error: String(error?.message ?? error) });
+        }
+        if (deps.now() >= entry.deadline) {
+          deps.logEvent('artifacts.monitor_timeout', { projectId });
+          return;
+        }
+        await deps.delay(intervalMs);
+      }
+    } finally {
+      monitors.delete(projectId);
+      deps.endActivity(account);
     }
-  })();
-  deps.holdOperationPage(page, completion, 'artifacts-turn-finished', { projectId });
+  // Detached monitoring must not reject, including failures in timer/activity/logging dependencies.
+  }).catch(() => undefined);
+  monitors.set(projectId, entry);
+  return entry.promise;
 }
 
 export async function waitForArtifactTurn(scoped, turn, overrides = {}) {

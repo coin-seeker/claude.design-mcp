@@ -15,7 +15,8 @@ const EFFORT_RADIOS = '[role=menu][data-open][data-nested] [role=menuitemradio]'
 const DS_OPTIONS = '[role=menuitemcheckbox]';
 // The trigger reads "Design system:\n<name>" with a selection and "No design system" without one
 // (measured 2026-10-10); "Choose design system" is the older empty label.
-const PICKER_TEXT = 'Choose design system|Design system:|No design system';
+// Korean UI (2026-10-15): "디자인 시스템:\n<name>".
+const PICKER_TEXT = 'Choose design system|Design system:|No design system|디자인 시스템:|디자인 시스템 선택|디자인 시스템 없음';
 const PICKER = { selector: 'button', text: PICKER_TEXT };
 
 async function poll(read, message, timeoutMs = 30_000) {
@@ -73,7 +74,8 @@ export async function waitForInput(page) {
 
 export async function openNewDesign(page) {
   await page.goto(homeUrl(), { waitUntil: 'domcontentloaded' });
-  await clickRequired(page, { selector: 'button[aria-label="Design, New"]' });
+  // The home page follows the account/browser locale: "Design, New" (en) or "디자인, 신규" (ko, seen 2026-10-15).
+  await clickRequired(page, { selector: 'button[aria-label="Design, New"], button[aria-label="디자인, 신규"]' });
   return poll(() => parseDesignLocation(page.url()), 'New Design artifact URL unavailable');
 }
 
@@ -81,7 +83,7 @@ export async function openNewDesignSystem(page) {
   await page.goto('https://claude.ai/artifacts/design', { waitUntil: 'domcontentloaded' });
   await poll(() => page.evaluate(() => {
     const button = [...document.querySelectorAll('button')].find((element) =>
-      element.getClientRects().length && element.innerText.trim() === 'Design System' && !element.disabled);
+      element.getClientRects().length && ['Design System', '디자인 시스템'].includes(element.innerText.trim()) && !element.disabled);
     if (!button) return false;
     button.click();
     return true;

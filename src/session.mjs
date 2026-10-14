@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 
 import { chromium as playwrightChromium } from 'playwright-core';
 
-import { ACCOUNTS, currentAccount } from './accounts.mjs';
+import { accountConfig, currentAccount } from './accounts.mjs';
 import { closeChrome, headlessEnabled, headlessUserAgent, readChromeMode, writeChromeMode } from './chrome-launch.mjs';
 import { whenIdleCloseSettled } from './idle-close.mjs';
 import { logEvent } from './log.mjs';
@@ -18,9 +18,9 @@ const CF_TEXT = /just a moment|checking your browser|attention required|잠시�
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const profileDir = () => ACCOUNTS[currentAccount()].profile;
+export const profileDir = () => accountConfig(currentAccount()).profile;
 export const chromeBin = () => process.env.CLAUDE_DESIGN_CHROME || DEFAULT_CHROME;
-export const cdpPort = () => ACCOUNTS[currentAccount()].port;
+export const cdpPort = () => accountConfig(currentAccount()).port;
 export const launchTimeout = () => Number(process.env['CLAUDE_DESIGN_LAUNCH_TIMEOUT_MS'] || 15_000);
 export const readyTimeout = () => Number(process.env.CLAUDE_DESIGN_READY_TIMEOUT_MS || 45_000);
 

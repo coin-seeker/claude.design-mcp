@@ -40,7 +40,7 @@ export const IMPL = Object.fromEntries(Object.keys(STANDALONE_IMPL).map((name) =
   (args = {}, deps) => {
     const backend = designBackend();
     const account = resolveAccountFor(name, args, deps);
-    if (backend === 'standalone' && account === 'sub') throw new Error('sub account requires the artifacts backend');
+    if (backend === 'standalone' && account !== 'main') throw new Error(`${account} account requires the artifacts backend`);
     return withAccount(account, async () => {
       // In-flight calls keep the account's session Chrome from being idle-closed.
       beginActivity(account);
@@ -77,7 +77,7 @@ const ARTIFACTS_DESCRIPTIONS = {
 };
 
 const ARTIFACTS_PROPERTIES = {
-  account: 'sub only on request.',
+  account: 'Default main. Other accounts (sub or added) only on request; design_login with a new name adds one.',
   effort: 'low|medium|high|extra|max; default extra; xhigh=extra.',
   model: 'Default opus-5.5.',
 };

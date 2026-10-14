@@ -75,11 +75,11 @@ export async function runCliCommand(argv, deps) {
       case 'delete': dispatchTool = 'design_delete'; args = { projectId: rest[0], confirm: true }; break;
       case 'sync': {
         const { positional, flags } = parseSyncFlags(rest);
-        if (!positional[0]) throw new Error('usage: node src/server.mjs sync <dir> [--account main|sub] [--timeout-ms <ms>]');
+        if (!positional[0]) throw new Error('usage: node src/server.mjs sync <dir> [--account <name>] [--timeout-ms <ms>]');
         const artifacts = (deps.designBackend ?? designBackend)() === 'artifacts';
         account = resolveAccount(flags.account);
         args = { dir: positional[0], account, timeoutMs: flags.timeoutMs };
-        if (!artifacts && account === 'sub') throw new Error('sub account requires the artifacts backend');
+        if (!artifacts && account !== 'main') throw new Error(`${account} account requires the artifacts backend`);
         const sync = artifacts ? IMPL.design_system_sync : (deps.runDesignSync ?? runDesignSync);
         result = await withAccount(account, () => sync({
           ...args,

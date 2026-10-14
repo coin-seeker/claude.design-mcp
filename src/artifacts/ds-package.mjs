@@ -55,7 +55,7 @@ export async function readPackage(directory) {
     const configPath = path.join(configDir, 'config.json');
     if ((await lstat(configDir)).isDirectory() && (await lstat(configPath)).isFile()) {
       const config = JSON.parse(await readFile(configPath, 'utf8'));
-      const pin = record(config) ? (currentAccount() === 'main' ? config.artifactId : config.artifactIds?.sub) : null;
+      const pin = record(config) ? (currentAccount() === 'main' ? config.artifactId : config.artifactIds?.[currentAccount()]) : null;
       if (typeof pin === 'string' && uuid.test(pin)) artifactId = pin;
       if (record(config) && config.remove !== undefined) remove = removalPaths(config.remove);
     }

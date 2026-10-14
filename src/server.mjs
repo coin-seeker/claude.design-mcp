@@ -3,7 +3,7 @@ import { runCliCommand } from './cli-run.mjs';
 import { recordToolCall, snapshotForToolCall, splitCallerArgs } from './history.mjs';
 import { IMPL, TOOLS } from './tools.mjs';
 import { resolveAccountFor } from './account-routing.mjs';
-import { withAccount } from './accounts.mjs';
+import { listAccounts, withAccount } from './accounts.mjs';
 import { idleCloseMs, startIdleClose } from './idle-close.mjs';
 import { closeIdleChrome } from './session.mjs';
 import { pathToFileURL } from 'node:url';
@@ -19,7 +19,7 @@ export async function handle(message, overrides = {}) {
     send({ jsonrpc: '2.0', id, result: {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-       serverInfo: { name: 'claude.design-mcp', version: '0.15.1' },
+       serverInfo: { name: 'claude.design-mcp', version: '0.16.0' },
     } });
     return;
   }
@@ -112,7 +112,7 @@ function runMcp() {
   });
   // MCP server only: close each account's session Chrome after an idle period (0 disables).
   const idleMs = idleCloseMs();
-  if (idleMs > 0) startIdleClose({ close: (account) => withAccount(account, () => closeIdleChrome()), ms: idleMs });
+  if (idleMs > 0) startIdleClose({ close: (account) => withAccount(account, () => closeIdleChrome()), accounts: listAccounts(), ms: idleMs });
   process.stderr.write('claude.design-mcp ready (stdio)\n');
 }
 

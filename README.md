@@ -6,7 +6,7 @@ Claude Design generates **on your own account** (not a local imitation).
 
 ## Migrating from standalone Claude Design (closes 2026-12-14)
 
-Version **0.15.0** uses claude.ai **Design artifacts**, backed by a Cowork session or
+Version **0.15.1** uses claude.ai **Design artifacts**, backed by a Cowork session or
 Chat conversation, rather than the retiring standalone `claude.ai/design` service.
 `projectId` is now the artifact UUID; old standalone ids are not interchangeable.
 Legacy standalone projects remain available as **local pulls**, not automatically
@@ -49,6 +49,9 @@ The migration progressed in these releases:
   newest-first events back to the latest prompt once idle) and retries one transient
   timeout; async create/iterate close the Cowork page after submit and a 30 s completion
   monitor on the shared RPC tab replaces the held page.
+- **0.15.1:** pull/preview download uploaded blobs from the frame's versioned
+  `/_f/<ver>/_blob/<id>` path (the bare `/_blob/<id>` answers 404 to the asset token), so
+  pulled `.dc.html` images resolve to the local `_blob/` copies.
 
 ## Using it from OpenCode (claude-design skill)
 

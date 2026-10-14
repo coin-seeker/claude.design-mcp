@@ -2,7 +2,7 @@ import path from 'node:path';
 import { sanitizeRelPath } from '../helpers.mjs';
 import { assetContentType } from '../preview-assets.mjs';
 import { createPool } from '../variants.mjs';
-import { frameFileUrl, frameOrigin } from './api.mjs';
+import { frameFileUrl } from './api.mjs';
 import { fetchFileBytes, projectFiles, resolveFilePath } from './manifest.mjs';
 
 const TEXT_FILE = /\.(?:html?|css|js|mjs|jsx|json|svg)$/i;
@@ -51,8 +51,10 @@ export async function loadArtifactAssets(projectId, manifest, overrides = {}) {
   for (const [rel, asset] of assets) {
     if (TEXT_FILE.test(rel)) for (const match of asset.bytes.toString('utf8').matchAll(BLOB_REFERENCE)) blobIds.add(match[1]);
   }
+  // The frame serves uploads under the versioned `/_f/<ver>/` tree; the bare `/_blob/<id>`
+  // the page references only resolves with the frame's session cookie (404 for the token).
   const blobs = await Promise.all([...blobIds].map((id) => acquire(() => download(
-    `_blob/${id}`, `${frameOrigin(projectId)}/_blob/${id}?__frame_t=${encodeURIComponent(manifest.assetToken)}`,
+    `_blob/${id}`, frameFileUrl(projectId, manifest.ver, `_blob/${id}`, manifest.assetToken),
   ))));
   const blobPaths = new Set();
   for (const asset of blobs) {

@@ -25,6 +25,8 @@ The migration progressed in these releases:
   the generation turn; see [Design-system sync](#design-system-sync).
 - **0.8.1:** all generation paths default to **Opus 5.5 / extra**, including edit
   and design-system sync.
+- **0.16.0:** any number of extra accounts — `design_login({account:"<new name>"})`
+  registers one (own profile, CDP port from `9379`); `sub` is unchanged.
 - **0.9.0:** optional `account: "main" | "sub"` isolates sub in `chrome-profile-sub`
   on CDP `9378`; project-id follow-ups resolve the account from the local index.
   Sub is opt-in only. Chat surfaces (`/chat/<uuid>?artifact=<id>`) are also supported.
@@ -75,9 +77,9 @@ Typical skill-driven flow:
 4. Review locally, then `design_iterate({projectId, prompt, wait:false})`, check and
    default-pull again. This is the skill policy; raw MCP create/iterate default to `wait:true`.
 
-Use `account:"sub"` only when explicitly requested; omit it otherwise. Subsequent
+Use a non-main `account` (`sub` or an added one) only when explicitly requested; omit it otherwise. Subsequent
 project-id calls inherit the indexed account, while name-based calls need an explicit
-account for sub. Defaults are **Opus 5.5 / extra**. Generation consumes usage;
+account for non-main accounts. Defaults are **Opus 5.5 / extra**. Generation consumes usage;
 `design_edit` also runs a turn rather than a free file-write RPC, and sync consumes
 a turn unless its precheck skips (a corrective sync turn consumes more usage).
 
@@ -135,30 +137,42 @@ are atomic with private directory/file permissions (`0700`/`0600`).
 
 ## Accounts
 
-Every tool accepts optional `account: "main" | "sub"`. Main is the default; use sub
-only when the user explicitly asks. Sub requires the artifacts backend: standalone
-rejects it with `sub account requires the artifacts backend`.
+Every tool accepts optional `account` (string). Main is the default; use any other
+account only when the user explicitly asks. Non-main accounts require the artifacts
+backend: standalone rejects them with `<name> account requires the artifacts backend`.
 
 | Account | Chrome profile | CDP port | Overrides |
 |---|---|---|---|
 | `main` | `~/.cache/claude-design-mcp/chrome-profile` | `9377` | `CLAUDE_DESIGN_PROFILE`, `CLAUDE_DESIGN_CDP_PORT` |
 | `sub` | `~/.cache/claude-design-mcp/chrome-profile-sub` | `9378` | `CLAUDE_DESIGN_SUB_PROFILE`, `CLAUDE_DESIGN_SUB_CDP_PORT` |
+| added (0.16.0) | `<state dir>/chrome-profile-<name>` | first free port from `9379` | edit `<state dir>/accounts.json` |
+
+**Adding accounts (0.16.0):** call `design_login({account:"<name>"})` with a new name
+(`^[a-z][a-z0-9-]{0,31}$`, e.g. `sub2`, `team-b`). It registers the account in
+`<state dir>/accounts.json` (`{"v":1,"accounts":{"<name>":{"profile","port"}}}`,
+atomic write, `0600`) with its own Chrome profile and the lowest CDP port from `9379`
+not used by main, sub or another registered account, then opens that profile for login.
+Registration is idempotent. Every other tool rejects an unregistered name with
+`Unknown account: <name>. Known: main, sub, …` and never launches a browser, so a typo
+cannot create an empty profile. `main` and `sub` stay built in with their existing
+profiles, ports, environment overrides, index entries and `artifactIds.sub` pins.
 
 Calls run in isolated async account contexts and reuse a separate session cache per
 account. Resolution is explicit `account` > the `projectId` index entry's account >
 main. Old entries without an account belong to main. Thus `design_pull({projectId})`
 automatically follows a sub artifact created by this server. Name reuse is scoped to
 the selected account; **name-based pull/preview resolve to main unless account is
-given**. Use `design_login({account:"sub"})` to report the sub account's email and org.
+given**. Use `design_login({account:"<name>"})` to report that account's email and org.
 
 `design_create`, `design_iterate`, `design_preview`, `design_variants`, `design_pull`
 and `design_check` keep their existing result shapes. Account is recorded at the top
 level of history, after `sessionId`, and appears in login/status/sync results and each
 design/design-system list item.
 
-Sync a package to sub with `node src/server.mjs sync <dir> --account sub` or
-`design_system_sync({dir:"<dir>", account:"sub"})`. Main keeps the existing
-`.design-sync/config.json` `artifactId` pin; sub uses `artifactIds.sub`. With no valid
+Sync a package to another account with `node src/server.mjs sync <dir> --account <name>` or
+`design_system_sync({dir:"<dir>", account:"<name>"})`. Main keeps the existing
+`.design-sync/config.json` `artifactId` pin; any other account uses `artifactIds.<name>`
+(e.g. `artifactIds.sub`). With no valid
 pin, sync matches the title in that account or creates a new artifact. The server
 never writes this config or the package directory. An already verified target returns
 `ok:true, skipped:true, created:false` without opening an operation page or sending
@@ -484,7 +498,7 @@ It does not modify the package directory or write a pin automatically.
 - Lookup/create title: a description ending in `design system` becomes `<prefix> Design System`
   (preserving the prefix's case); otherwise the title is `<package.name> Design System`.
 - Target resolution: a UUID in `.design-sync/config.json` (`artifactId` for main,
-  `artifactIds.sub` for sub) wins if present in
+  `artifactIds.<name>` for other accounts) wins if present in
   `design_system_list`; otherwise use an exact title match. Multiple title matches refuse
   without opening an operation page; no match creates a new Design System artifact.
   **Existing artifacts keep their current list title**, including capitalization. A pinned

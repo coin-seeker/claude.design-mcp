@@ -7,10 +7,20 @@ export const EMPTY_SIGNATURE = createHash('sha256').update('').digest('hex');
 // measured 2026-10-10); they are not prompts and must not start or confirm a turn.
 const LOCAL_COMMAND = /^\s*<(local-command-[a-z]+|command-[a-z]+)>/;
 
+// A typed prompt is a string, or — when sent with attachments (measured 2026-10-16) — an array of
+// image/document blocks plus text blocks. Tool-result echoes and blocks without text are not prompts.
+export function promptText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content) || content.some((block) => block?.type === 'tool_result')) return null;
+  const texts = content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text);
+  return texts.length ? texts.join('\n') : null;
+}
+
 export function isRealPrompt(event) {
   const payload = event.payload;
-  return payload.type === 'user' && typeof payload.message?.content === 'string' && payload.isSynthetic !== true
-    && !LOCAL_COMMAND.test(payload.message.content);
+  if (payload.type !== 'user' || payload.isSynthetic === true) return false;
+  const text = promptText(payload.message?.content);
+  return text !== null && !LOCAL_COMMAND.test(text);
 }
 
 function newestFirst(events) {

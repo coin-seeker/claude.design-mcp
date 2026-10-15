@@ -38,7 +38,7 @@ function coworkTurns(events) {
       baseline = total;
       const received = payload.server_received_wall_ms;
       const ts = received == null ? null : toIso(Number(received));
-      turns.push(promptTurn(payload.message.content, ts ?? event.created_at ?? null, turns.length));
+      turns.push(promptTurn(textContent(payload.message.content), ts ?? event.created_at ?? null, turns.length));
       continue;
     }
     const turn = turns.at(-1);

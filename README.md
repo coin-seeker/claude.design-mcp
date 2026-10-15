@@ -125,6 +125,11 @@ successful blob references to relative paths. Failed downloads are reported in `
 and keep their original references. Zip pulls archive the same layout. Default pulls
 (no explicit `dir` or `zip`) still create revision snapshots, including runtime and blobs.
 Signatures hash sorted, prefix-stripped `path:sha256` pairs for `project/` files only.
+Non-zip pulls also render the representative document (`*.dc.html` > `index.html` > other
+`.html`, the dashboard's rule) at 1280×800 into a JPEG `.thumbnail` and return its path as
+`thumbnail`. It is best-effort (a failed render removes any stale `.thumbnail` and the pull
+still succeeds) and is not listed in `files`, so it never mints a revision. Older pull
+directories get one with `node scripts/backfill-thumbnails.mjs [designsRoot] [--dry-run]`.
 
 **`design_edit`** has no artifacts file-write API. It runs an
 instructed Cowork/chat turn in a background operation page, requires each old string to occur

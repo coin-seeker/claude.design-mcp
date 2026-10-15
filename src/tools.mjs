@@ -61,7 +61,7 @@ export const IMPL = Object.fromEntries(Object.keys(STANDALONE_IMPL).map((name) =
 const ARTIFACTS_DESCRIPTIONS = {
   design_login: 'Open Chrome for Design login; report account.',
   design_list: 'List artifacts. details/detailsFor add scoped file stats. Background API.',
-  design_create: 'Create/reuse artifact; fresh forces new. Require designSystem XOR withoutDesignSystem:true. wait:false is async.',
+  design_create: 'Create/reuse artifact; fresh forces new. Require designSystem XOR withoutDesignSystem:true. attachments uploads local files with the first prompt. wait:false is async.',
   design_iterate: 'Follow-up prompt; designSystem reselects if picker exists. wait:false submits async.',
   design_pull: 'Download artifact by id/name. No dir/zip records revision. Background API.',
   design_preview: 'Headless artifact PNG; path accepts ?query/#hash; optional CSS-pixel clip. Caps: 20000h/10000w/40M pixels.',

@@ -12,6 +12,7 @@ const GENERATE_FLAGS = {
 const CREATE_FLAGS = {
   ...GENERATE_FLAGS,
   '--without-design-system': { key: 'withoutDesignSystem', value: true },
+  '--attach': { key: 'attachments', multiple: true },
 };
 
 const SYNC_FLAGS = {
@@ -36,7 +37,8 @@ export function parseFlags(args, definitions) {
     else {
       const value = args[index + 1];
       if (value === undefined || value.startsWith('--')) throw new Error(`${argument} requires a value`);
-      flags[definition.key] = value;
+      if (definition.multiple) (flags[definition.key] ??= []).push(value);
+      else flags[definition.key] = value;
       index += 1;
     }
   }

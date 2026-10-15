@@ -255,7 +255,7 @@ Re-review this verdict if any of these conditions occurs:
 |------|------|
 | `design_login` | One-time: open Chrome to log into Claude Design (session persists) |
 | `design_list` | List your Design artifacts (standalone: projects); `details?: true` includes file count, remote update time and signature; `includeDesignSystems?: true` appends Design System instances |
-| `design_create` | Create a project and generate a design from a prompt — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `name?`, `wait?`, `model?`, `fresh?` |
+| `design_create` | Create a project and generate a design from a prompt — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `name?`, `wait?`, `model?`, `fresh?`, `attachments?` (local file paths uploaded with the first prompt; CLI `--attach <path>` repeatable) |
 | `design_variants` | Generate multiple design variants of one prompt in parallel — `prompt`, **`designSystem` XOR `withoutDesignSystem: true`** (+ `withoutDesignSystemReason?`), `count?`, `axis?`, `name?`, `preview?`, `model?` |
 | `design_iterate` | Send a follow-up prompt to modify a design — `projectId`, `prompt`, `wait?`, `model?`, `designSystem?` |
 | `design_pull` | Download a project's files to local — `projectId` or `name`, `dir?`, `zip?` |

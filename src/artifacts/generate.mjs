@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { ensureSession } from '../session.mjs';
 import { withOperationPage, withRpcPage } from '../operation-pages.mjs';
 import { sanitizeName } from '../helpers.mjs';
@@ -30,6 +32,17 @@ function requireString(value, name) {
   return text;
 }
 
+// Checked before any browser work so a typo never leaves a blank artifact behind.
+function resolveAttachments(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error('attachments must be an array of file paths');
+  return value.map((entry) => {
+    const file = path.resolve(requireString(entry, 'attachment path'));
+    if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error(`attachment not found: ${file}`);
+    return file;
+  });
+}
+
 async function finishTurn(scoped, turn, deps) {
   const result = { projectId: turn.projectId, url: artifactUrl(turn.projectId, turn.sessionId, turn.chatId), ...(turn.surface === 'chat' ? {} : { sessionId: turn.sessionId }), backend: 'artifacts', model: turn.model, effort: turn.effort, ...turn.echo };
   if (!turn.wait) {
@@ -47,6 +60,7 @@ export async function artifactsCreate(args = {}, overrides = {}) {
   const prompt = requireString(args.prompt, 'prompt');
   const request = resolveOptionalModel(args.model);
   const effort = resolveEffort(request, args.effort);
+  const attachments = resolveAttachments(args.attachments);
   const name = sanitizeName(args.name || prompt.replace(/\s+/g, ' ').slice(0, 64));
   const session = await deps.ensureSession({ visible: false });
   if (args.name && args.fresh !== true) {
@@ -61,6 +75,7 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       });
     }
     if (existing) {
+      if (attachments.length) throw new Error(`attachments need a new artifact, but "${name}" already exists; use a new name or fresh: true`);
       const result = await deps.artifactsIterate({ projectId: existing.projectId, prompt, model: args.model, effort, wait: args.wait, timeoutMs: args.timeoutMs, ...(choice.designSystem ? { designSystem: choice.designSystem } : {}) }, deps);
       return { ...result, ...designSystemChoiceEcho(choice), name, reused: true };
     }
@@ -78,6 +93,7 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       const model = await deps.applyModelArtifacts(page, request);
       const selectedEffort = await deps.applyEffortArtifacts(page, effort);
       const system = await deps.applyDesignSystemArtifacts(page, choice.designSystem ?? null);
+      for (const file of attachments) await deps.attachFile(page, file, path.basename(file));
       let baseline;
       try { baseline = deps.artifactSignature((await deps.getManifest(scoped, projectId, deps)).files); }
       catch (error) {

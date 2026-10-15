@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { logEvent } from '../log.mjs';
 import { ensureSession } from '../session.mjs';
 import { withOperationPage, withRpcPage } from '../operation-pages.mjs';
 import { sanitizeName } from '../helpers.mjs';
@@ -23,7 +24,7 @@ const FLOW_DEPS = {
   ensureSession, withOperationPage, withRpcPage, frameRequest, ccrRequest,
   findByName, updateEntry, removeEntry, readIndex, readChatMessages, findWorkspaceSessionId, resolveDesign, resolveSessionId, getManifest, artifactSignature,
   readAllEvents, ...composer, confirmSubmitted, monitorUntilSettled, waitForArtifactTurn, now: Date.now,
-  artifactsIterate,
+  artifactsIterate, logEvent,
 };
 
 function requireString(value, name) {
@@ -116,9 +117,9 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       const location = created ?? parseDesignLocation(page.url?.() ?? '');
       const projectId = location?.projectId ?? artifactIdFromUrl(page.url?.());
       if (projectId && !sent) {
-        await deps.frameRequest(scoped, 'DELETE', `/api/frame/${encodeURIComponent(projectId)}`).catch(() => {});
+        await deps.frameRequest(scoped, 'DELETE', `/api/frame/${encodeURIComponent(projectId)}`).catch((error) => deps.logEvent('create.cleanup_failed', { projectId, step: 'frame', error: String(error?.message ?? error) }));
         // Deleting the artifact leaves its Cowork session active in the sidebar; the web app deletes it separately.
-        if (location?.sessionId) await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(location.sessionId)}`, 'DELETE').catch(() => {});
+        if (location?.sessionId) await deps.ccrRequest(scoped, `/v1/code/sessions/${encodeURIComponent(location.sessionId)}`, 'DELETE').catch((error) => deps.logEvent('create.cleanup_failed', { projectId, step: 'session', error: String(error?.message ?? error) }));
         try { deps.removeEntry(projectId); } catch { /* Preserve the original failure on cleanup errors. */ }
       }
       throw error;

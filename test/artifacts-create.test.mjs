@@ -85,6 +85,21 @@ test('Given a confirmation failure after send, when creating, then the submitted
   assert.equal(calls.includes('delete'), false);
   assert.equal(calls.some((call) => call.startsWith('DELETE /v1/code/sessions/')), false);
 });
+for (const step of ['frame', 'session']) {
+  test(`Given a rejected ${step} cleanup, when creation fails before send, then cleanup is logged and the original failure survives`, async () => {
+    const original = new Error('composer failed'); // Given
+    const logs = [];
+    const { deps, calls } = fixture({
+      applyEffortArtifacts: async () => { throw original; },
+      frameRequest: async (_scope, method) => { if (method === 'DELETE') { calls.push('delete'); if (step === 'frame') throw new Error('frame denied'); } },
+      ccrRequest: async (_scope, path, method) => { calls.push(`${method} ${path}`); if (step === 'session') throw new Error('session denied'); },
+      logEvent: (...args) => { logs.push(args); },
+    });
+    await assert.rejects(artifactsCreate({ prompt: 'card', withoutDesignSystem: true }, deps), (error) => error === original); // When
+    assert.deepEqual(logs, [['create.cleanup_failed', { projectId: 'id', step, error: `${step} denied` }]]); // Then
+    assert.deepEqual(calls.slice(-3), ['delete', 'DELETE /v1/code/sessions/cse_test', 'remove']);
+  });
+}
 test('Given attachments, when creating, then each file is attached after grounding and before the baseline and send', async () => {
   const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cd-attach-'));

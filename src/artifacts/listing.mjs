@@ -6,7 +6,9 @@ import { listLimit } from '../list-details.mjs';
 import { createPool } from '../variants.mjs';
 import { currentAccount } from '../accounts.mjs';
 
-const READ_DEPS = { frameRequest, resolveTypeSlugs, readIndex, getManifest };
+export const PENDING_CREATE_TTL_MS = 600_000;
+
+const READ_DEPS = { frameRequest, resolveTypeSlugs, readIndex, getManifest, now: Date.now };
 
 export function toIso(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -39,7 +41,12 @@ async function designSystemInstances(scoped, deps) {
 export async function listDesigns(scoped, { limit, includeDesignSystems = false } = {}, overrides = {}) {
   const deps = { ...READ_DEPS, ...overrides };
   const slugs = await deps.resolveTypeSlugs(scoped);
-  const response = await deps.frameRequest(scoped, 'GET', `/api/frame/artifacts?rel=mine&type=${encodeURIComponent(slugs.design)}&limit=${listLimit(limit) ?? 100}`);
+  const index = deps.readIndex();
+  const pending = new Set(Object.entries(index.byArtifact).filter(([, entry]) => {
+    const t = Date.parse(entry.pendingCreateAt);
+    return (entry.account ?? 'main') === currentAccount() && Number.isFinite(t) && deps.now() - t < PENDING_CREATE_TTL_MS;
+  }).map(([id]) => id));
+  const response = await deps.frameRequest(scoped, 'GET', `/api/frame/artifacts?rel=mine&type=${encodeURIComponent(slugs.design)}&limit=${(listLimit(limit) ?? 100) + pending.size}`);
   if (!Array.isArray(response?.artifacts)) throw new TypeError('Invalid artifacts listing');
   let frames = [];
   try {
@@ -50,8 +57,7 @@ export async function listDesigns(scoped, { limit, includeDesignSystems = false 
     if (!(error instanceof Error)) throw error;
   }
   const viewed = new Map(frames.map((frame) => [frame.slug, toIso(frame.last_viewed_at)]));
-  const index = deps.readIndex();
-  const designs = response.artifacts.filter((item) => !item.type_slug || item.type_slug === slugs.design).map((item) => {
+  const designs = response.artifacts.filter((item) => !pending.has(item.id) && (!item.type_slug || item.type_slug === slugs.design)).map((item) => {
     if (typeof item.id !== 'string' || typeof item.title !== 'string') throw new TypeError('Invalid Design listing item');
     const updatedAt = toIso(item.updated_at);
     const lastViewed = viewed.get(item.id);

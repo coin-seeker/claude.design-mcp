@@ -87,6 +87,7 @@ export async function artifactsCreate(args = {}, overrides = {}) {
     try {
       created = await deps.openNewDesign(page);
       const { projectId, sessionId } = created;
+      deps.updateEntry(projectId, { pendingCreateAt: new Date(deps.now()).toISOString() });
       await deps.frameRequest(scoped, 'POST', `/api/frame/retitle/${encodeURIComponent(projectId)}`, { title: name });
       deps.updateEntry(projectId, { name, sessionId, ...(created.surface ? { surface: created.surface, chatId: created.chatId } : {}) });
       await deps.waitForInput(page);
@@ -103,6 +104,7 @@ export async function artifactsCreate(args = {}, overrides = {}) {
       }
       await deps.sendPrompt(page, prompt);
       sent = true;
+      deps.updateEntry(projectId, { pendingCreateAt: null });
       await deps.confirmSubmitted(scoped, created.surface === 'chat' ? created : sessionId, 0, deps);
       const workspaceSessionId = created.surface === 'chat'
         ? await deps.findWorkspaceSessionId(scoped, created.chatId, deps).catch(() => null) : null;

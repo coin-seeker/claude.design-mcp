@@ -6,6 +6,8 @@ import { expandHome, sanitizeName, sanitizeRelPath } from '../helpers.mjs';
 import { DEFAULT_OUT } from '../pull.mjs';
 import { getManifest, artifactSignature } from './manifest.mjs';
 import { loadArtifactAssets, rewriteArtifactBlobs } from './assets.mjs';
+import { canonicalMapKey } from '../preview-assets.mjs';
+import { writeThumbnail } from './thumbnail.mjs';
 
 const exec = promisify(execFile);
 
@@ -24,6 +26,7 @@ export async function pullArtifact(scoped, design, outDir = DEFAULT_OUT, options
   await mkdir(root, { recursive: true });
   const { assets, errors, blobPaths } = await loadArtifactAssets(design.projectId, manifest, options);
   const files = [];
+  const written = new Map();
   for (const [rel, asset] of assets) {
     const safeRel = sanitizeRelPath(rel, root);
     const bytes = rewriteArtifactBlobs(rel, asset, blobPaths);
@@ -32,6 +35,7 @@ export async function pullArtifact(scoped, design, outDir = DEFAULT_OUT, options
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, bytes);
       files.push({ path: rel, bytes: bytes.length });
+      written.set(canonicalMapKey(rel), { path: rel, bytes, contentType: asset.contentType });
     } catch (error) {
       errors.push({ path: rel, error: error instanceof Error ? error.message : String(error) });
     }
@@ -45,5 +49,11 @@ export async function pullArtifact(scoped, design, outDir = DEFAULT_OUT, options
     const zipPath = path.join(baseDir, `${safeName}.zip`);
     return { ...common, dir: baseDir, files: [{ path: zipPath, bytes: (await stat(zipPath)).size }], signature: null };
   }
-  return { ...common, dir: root, files, signature: artifactSignature(manifest.files), remoteUpdatedAt: manifest.updatedAt };
+  // Not listed in `files`: revision snapshots hash `files`, and a re-rendered image would mint a
+  // new revision on every pull of unchanged content.
+  const thumbnail = await (options.writeThumbnail || writeThumbnail)(root, written);
+  return {
+    ...common, dir: root, files, signature: artifactSignature(manifest.files), remoteUpdatedAt: manifest.updatedAt,
+    ...(thumbnail ? { thumbnail } : {}),
+  };
 }

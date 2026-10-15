@@ -19,7 +19,7 @@ export async function handle(message, overrides = {}) {
     send({ jsonrpc: '2.0', id, result: {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-       serverInfo: { name: 'claude.design-mcp', version: '0.16.1' },
+       serverInfo: { name: 'claude.design-mcp', version: '0.17.0' },
     } });
     return;
   }

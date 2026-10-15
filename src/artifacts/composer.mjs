@@ -168,7 +168,7 @@ export async function applyDesignSystemArtifacts(page, requested) {
     await setMenuOpen(page, PICKER, false);
     await poll(async () => {
       const state = await pickerState(page);
-      return selected ? state.label.includes(selected.name) : /No design system|Choose design system/.test(state.label);
+      return selected ? state.label.includes(selected.name) : /No design system|Choose design system|디자인 시스템 없음|디자인 시스템 선택/.test(state.label);
     }, 'Design system picker label verification failed');
     return { name: selected?.name ?? null };
   } catch (error) {

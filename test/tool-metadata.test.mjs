@@ -11,7 +11,7 @@ test('Given focus-free tools, when advertising them, then metadata names the no-
   assert.match(TOOLS.find((tool) => tool.name === 'design_check').description, /RPC-first/);
 });
 
-test('Given published package metadata, when reading version, then it is 0.17.0', async () => {
+test('Given published package metadata, when reading version, then it is 0.17.1', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.version, '0.17.0');
+  assert.equal(pkg.version, '0.17.1');
 });

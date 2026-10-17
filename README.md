@@ -106,7 +106,7 @@ timeout (`TimeoutError`, `signal timed out`, `Timeout <n>ms exceeded`) is retrie
 
 | Status | Artifacts meaning |
 |---|---|
-| `awaiting_input` | Session requires action (`requiresAction` types), or the turn ended in bucket `blocked` with no new output (`problem: "need_input: <Claude's question>"`) |
+| `awaiting_input` | Session requires action (`requiresAction`: `{ type, toolName?, fields }` — `type` falls back to `unknown`, `fields` lists key names only, values are never copied), or the turn ended in bucket `blocked` with no new output (`problem: "need_input: <Claude's question>"`) |
 | `done` | Successful result after the latest real prompt, with non-empty output changed from the submission baseline (or no known baseline); a `blocked` bucket adds `problem: "need_input: …"` |
 | `no_output` | Successful result, but empty output or the same signature as the baseline |
 | `interrupted` | Error/non-success result, or an idle completed worker with a prompt but no result |

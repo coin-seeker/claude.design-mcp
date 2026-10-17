@@ -1,5 +1,5 @@
 import { designApiRequest } from './api.mjs';
-import { EMPTY_SIGNATURE, FINISHED_BUCKETS } from './turn.mjs';
+import { EMPTY_SIGNATURE, FINISHED_BUCKETS, projectRequiredActions } from './turn.mjs';
 
 export async function findWorkspaceSessionId(scoped, chatId, deps = {}) {
   const request = deps.designApiRequest ?? designApiRequest;
@@ -67,7 +67,7 @@ export function classifyChatTurn({ messages, signature, submitSignature, session
   const base = { lastMessageRole: chatLastMessageRole(messages) };
   if (session && !chatIdle(messages, session)) {
     if (session.requires_action_details_list?.length) {
-      return { ...base, status: 'awaiting_input', requiresAction: session.requires_action_details_list.map(({ type }) => ({ type })) };
+      return { ...base, status: 'awaiting_input', requiresAction: projectRequiredActions(session.requires_action_details_list) };
     }
     const stalled = now - Date.parse(session.last_event_at) > sessionStallMs;
     return { ...base, status: stalled ? 'stalled' : 'generating' };

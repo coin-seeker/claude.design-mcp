@@ -16,6 +16,18 @@ export function promptText(content) {
   return texts.length ? texts.join('\n') : null;
 }
 
+// requires_action_details_list items carry no `type` in Cowork sessions (2026-10-17: `[{}]` while a
+// "기존 아티팩트 교체" confirm was pending). Report a fallback type, the tool name when present, and the key
+// names only — values may be secret, so nothing else is copied.
+export function projectRequiredActions(list) {
+  return list.map((item) => {
+    const action = { type: typeof item?.type === 'string' ? item.type : 'unknown' };
+    if (typeof item?.tool_name === 'string') action.toolName = item.tool_name;
+    action.fields = item && typeof item === 'object' ? Object.keys(item).sort() : [];
+    return action;
+  });
+}
+
 export function isRealPrompt(event) {
   const payload = event.payload;
   if (payload.type !== 'user' || payload.isSynthetic === true) return false;
@@ -65,7 +77,7 @@ export function classifyArtifactTurn({ session, events, signature, submitSignatu
   const ordered = newestFirst(events);
   const base = { lastMessageRole: lastMessageRole(ordered) };
   if (session.requires_action_details_list?.length) {
-    return { ...base, status: 'awaiting_input', requiresAction: session.requires_action_details_list.map(({ type }) => ({ type })) };
+    return { ...base, status: 'awaiting_input', requiresAction: projectRequiredActions(session.requires_action_details_list) };
   }
 
   const prompt = ordered.find(isRealPrompt);
